@@ -1,10 +1,16 @@
-import { Fraunces_600SemiBold, Fraunces_600SemiBold_Italic } from "@expo-google-fonts/fraunces";
-import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from "@expo-google-fonts/inter";
+import {
+  BodoniModa_400Regular,
+  BodoniModa_400Regular_Italic,
+  BodoniModa_500Medium,
+  BodoniModa_600SemiBold,
+} from "@expo-google-fonts/bodoni-moda";
+import { Jost_300Light, Jost_400Regular, Jost_500Medium, Jost_600SemiBold } from "@expo-google-fonts/jost";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { colors } from "@/constants/theme";
 
 SplashScreen.preventAutoHideAsync();
@@ -15,12 +21,14 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
-    Fraunces_600SemiBold,
-    Fraunces_600SemiBold_Italic,
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
+    BodoniModa_400Regular,
+    BodoniModa_400Regular_Italic,
+    BodoniModa_500Medium,
+    BodoniModa_600SemiBold,
+    Jost_300Light,
+    Jost_400Regular,
+    Jost_500Medium,
+    Jost_600SemiBold,
   });
 
   useEffect(() => {
@@ -34,7 +42,7 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <Stack
         screenOptions={{
           headerShown: false,
@@ -42,24 +50,12 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen
-          name="add-item"
-          options={{
-            presentation: "modal",
-            headerShown: true,
-            title: "Add Piece",
-          }}
-        />
-        <Stack.Screen
-          name="color-quiz"
-          options={{
-            presentation: "modal",
-            headerShown: true,
-            title: "Discover Your Colors",
-          }}
-        />
+        {/* Both modals draw their own headers, so the Stack supplies the
+            presentation and nothing else. */}
+        <Stack.Screen name="add-item" options={{ presentation: "modal" }} />
+        <Stack.Screen name="color-quiz" options={{ presentation: "modal" }} />
       </Stack>
       <StatusBar style="dark" />
-    </>
+    </GestureHandlerRootView>
   );
 }

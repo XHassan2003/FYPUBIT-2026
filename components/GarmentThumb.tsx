@@ -1,23 +1,30 @@
 import { Image } from "expo-image";
-import { StyleSheet, View } from "react-native";
-import { colors, radii } from "@/constants/theme";
+import { StyleSheet, View, ViewStyle } from "react-native";
+import { colors } from "@/constants/theme";
 import { WardrobeItem } from "@/data/mockWardrobe";
 import { GarmentSilhouette } from "./GarmentSilhouette";
 
 interface GarmentThumbProps {
-  item: Pick<WardrobeItem, "category" | "color" | "image">;
-  size?: number;
-  rounded?: boolean;
+  item: Pick<WardrobeItem, "category" | "color" | "image" | "name">;
+  /** Callers own the frame's dimensions — pass width/height, flex, or aspectRatio. */
+  style?: ViewStyle | ViewStyle[];
+  silhouetteSize?: number;
 }
 
-export function GarmentThumb({ item, size = 64, rounded = true }: GarmentThumbProps) {
+export function GarmentThumb({ item, style, silhouetteSize = 56 }: GarmentThumbProps) {
   return (
-    <View style={[styles.frame, { width: size, height: size, borderRadius: rounded ? radii.md : 0 }]}>
+    <View style={[styles.frame, style]}>
       {item.image ? (
-        <Image source={{ uri: item.image }} style={styles.image} contentFit="cover" transition={150} />
+        <Image
+          source={{ uri: item.image }}
+          style={styles.image}
+          contentFit="cover"
+          transition={400}
+          accessibilityLabel={item.name}
+        />
       ) : (
         <View style={styles.silhouetteWrap}>
-          <GarmentSilhouette category={item.category} color={item.color} size={size * 0.7} />
+          <GarmentSilhouette category={item.category} color={item.color} size={silhouetteSize} />
         </View>
       )}
     </View>
@@ -26,11 +33,11 @@ export function GarmentThumb({ item, size = 64, rounded = true }: GarmentThumbPr
 
 const styles = StyleSheet.create({
   frame: {
-    backgroundColor: colors.paperDim,
+    backgroundColor: colors.sand,
     overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
   },
   image: { width: "100%", height: "100%" },
-  silhouetteWrap: { alignItems: "center", justifyContent: "center" },
+  // A hair lighter than sand, so a silhouette tile reads as deliberate rather
+  // than as a photo that failed to load.
+  silhouetteWrap: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#EFEAE1" },
 });

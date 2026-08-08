@@ -1,31 +1,31 @@
-import { StyleSheet, Text, View } from "react-native";
-import { colors, spacing, type } from "@/constants/theme";
+import { Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
+import { colors, inkAlpha, spacing, type } from "@/constants/theme";
 
 interface SectionHeaderProps {
   title: string;
   action?: string;
   onAction?: () => void;
+  style?: ViewStyle;
 }
 
-export function SectionHeader({ title, action, onAction }: SectionHeaderProps) {
+/** Eyebrow, a hairline that eats the remaining width, and an optional action. */
+export function SectionHeader({ title, action, onAction, style }: SectionHeaderProps) {
   return (
-    <View style={styles.row}>
+    <View style={[styles.row, style]}>
       <Text style={type.eyebrow}>{title}</Text>
+      <View style={styles.rule} />
       {action ? (
-        <Text style={[type.smallMedium, styles.action]} onPress={onAction}>
-          {action}
-        </Text>
+        <Pressable onPress={onAction} accessibilityRole="button" style={({ pressed }) => pressed && styles.pressed}>
+          <Text style={[type.caps, styles.action]}>{action}</Text>
+        </Pressable>
       ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-  },
-  action: { color: colors.violet },
+  row: { flexDirection: "row", alignItems: "center", gap: spacing.lg },
+  rule: { flex: 1, height: 1, backgroundColor: inkAlpha.a12 },
+  action: { color: colors.smoke },
+  pressed: { opacity: 0.6 },
 });

@@ -1,36 +1,44 @@
 import { Pressable, StyleSheet, Text } from "react-native";
-import { colors, radii, spacing, type } from "@/constants/theme";
+import { colors, inkAlpha, spacing, type } from "@/constants/theme";
 
 interface ChipProps {
   label: string;
   selected?: boolean;
   onPress?: () => void;
+  disabled?: boolean;
 }
 
-export function Chip({ label, selected, onPress }: ChipProps) {
+export function Chip({ label, selected = false, onPress, disabled }: ChipProps) {
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [styles.chip, selected && styles.chipSelected, pressed && styles.pressed]}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityState={{ selected, disabled: !!disabled }}
+      style={({ pressed }) => [
+        styles.chip,
+        selected ? styles.selected : styles.unselected,
+        pressed && !disabled && styles.pressed,
+        disabled && styles.disabled,
+      ]}
     >
-      <Text style={[type.smallMedium, selected && styles.labelSelected]}>{label}</Text>
+      <Text style={[type.caps, selected ? styles.selectedLabel : styles.unselectedLabel]} numberOfLines={1}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   chip: {
-    borderRadius: radii.pill,
-    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
-    backgroundColor: colors.card,
+    paddingVertical: spacing.sm,
     borderWidth: 1,
-    borderColor: colors.border,
   },
-  chipSelected: {
-    backgroundColor: colors.violetMuted,
-    borderColor: colors.violet,
-  },
+  selected: { backgroundColor: colors.ink, borderColor: colors.ink },
+  unselected: { backgroundColor: "transparent", borderColor: inkAlpha.a15 },
   pressed: { opacity: 0.7 },
-  labelSelected: { color: colors.violetDeep },
+  disabled: { opacity: 0.4 },
+  selectedLabel: { color: colors.paper },
+  unselectedLabel: { color: colors.smoke },
 });

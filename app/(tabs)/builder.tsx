@@ -1,142 +1,214 @@
+import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { Button } from "@/components/Button";
 import { GarmentThumb } from "@/components/GarmentThumb";
+import { Screen } from "@/components/Screen";
 import { SectionHeader } from "@/components/SectionHeader";
-import { colors, radii, shadow, spacing, type } from "@/constants/theme";
-import { Category, Occasion, WardrobeItem } from "@/data/mockWardrobe";
+import { colors, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
+import { Category, WardrobeItem } from "@/data/mockWardrobe";
 import { useWardrobe } from "@/store/useWardrobe";
 
-const RAILS: { category: Category; title: string }[] = [
-  { category: "tops", title: "TOPS" },
-  { category: "bottoms", title: "BOTTOMS" },
-  { category: "shoes", title: "SHOES" },
+const STAGE = require("@/assets/images/editorial/builder-stage.jpg");
+
+const RAILS: { category: Category; label: string }[] = [
+  { category: "tops", label: "Tops" },
+  { category: "bottoms", label: "Bottoms" },
+  { category: "shoes", label: "Shoes" },
 ];
 
 export default function BuilderScreen() {
-  const { items, saveOutfit } = useWardrobe();
+  const items = useWardrobe((state) => state.items);
+  const saveOutfit = useWardrobe((state) => state.saveOutfit);
+
   const [selection, setSelection] = useState<Partial<Record<Category, WardrobeItem>>>({});
+  const [saved, setSaved] = useState(false);
 
-  const byCategory = useMemo(() => {
-    const map: Record<Category, WardrobeItem[]> = { tops: [], bottoms: [], outerwear: [], shoes: [], accessories: [] };
-    for (const item of items) map[item.category].push(item);
-    return map;
-  }, [items]);
+  const chosen = useMemo(
+    () => RAILS.map(({ category }) => selection[category]).filter((item): item is WardrobeItem => Boolean(item)),
+    [selection]
+  );
 
-  const pick = (item: WardrobeItem) => {
-    setSelection((prev) => ({ ...prev, [item.category]: prev[item.category]?.id === item.id ? undefined : item }));
-  };
+  const pick = (item: WardrobeItem) =>
+    setSelection((prev) => ({
+      ...prev,
+      [item.category]: prev[item.category]?.id === item.id ? undefined : item,
+    }));
 
-  const surpriseMe = () => {
+  const surprise = () => {
     const next: Partial<Record<Category, WardrobeItem>> = {};
-    for (const rail of RAILS) {
-      const pool = byCategory[rail.category];
-      if (pool.length > 0) next[rail.category] = pool[Math.floor(Math.random() * pool.length)];
-    }
+    RAILS.forEach(({ category }) => {
+      const pool = items.filter((item) => item.category === category);
+      if (pool.length > 0) next[category] = pool[Math.floor(Math.random() * pool.length)];
+    });
     setSelection(next);
   };
 
-  const selectedItems = RAILS.map((rail) => selection[rail.category]).filter((item): item is WardrobeItem => Boolean(item));
-
-  const handleSave = () => {
-    if (selectedItems.length === 0) return;
+  const save = () => {
+    if (chosen.length === 0) return;
     saveOutfit(
-      selectedItems.map((item) => item.id),
-      "casual" as Occasion
+      chosen.map((item) => item.id),
+      "casual"
     );
     setSelection({});
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2400);
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={type.h1}>Outfit Builder</Text>
-        <Text style={[type.body, styles.subtitle]}>Pick a piece from each rail, or let us surprise you.</Text>
+    <Screen>
+      <View style={styles.header}>
+        <Text style={[type.eyebrow, styles.ash]}>Compose</Text>
+        <Text style={[type.h1, styles.title]}>Builder</Text>
+        <Text style={[type.body, styles.lede]}>
+          Layer a look piece by piece, or let the shuffle make the first move.
+        </Text>
+      </View>
 
-        <View style={styles.preview}>
-          {selectedItems.length === 0 ? (
-            <Text style={[type.body, styles.muted]}>Your look will show up here.</Text>
-          ) : (
-            <View style={styles.previewRow}>
-              {selectedItems.map((item) => (
-                <View key={item.id} style={styles.previewPiece}>
-                  <GarmentThumb item={item} size={80} />
-                  {item.brand ? (
-                    <Text style={type.eyebrow} numberOfLines={1}>
-                      {item.brand}
-                    </Text>
-                  ) : null}
-                  <Text style={type.small} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {RAILS.map((rail) => (
-          <View key={rail.category} style={styles.section}>
-            <SectionHeader title={rail.title} />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.railRow}>
-              {byCategory[rail.category].map((item) => {
-                const isSelected = selection[rail.category]?.id === item.id;
-                return (
-                  <Pressable key={item.id} style={[styles.railItem, isSelected && styles.railItemSelected]} onPress={() => pick(item)}>
-                    <GarmentThumb item={item} size={56} />
-                    {item.brand ? (
-                      <Text style={type.eyebrow} numberOfLines={1}>
-                        {item.brand}
+      <View style={styles.stageSection}>
+        <View style={styles.stage}>
+          <Image source={STAGE} style={styles.stageImage} contentFit="cover" transition={500} />
+          <View style={styles.stageRow}>
+            {RAILS.map(({ category, label }) => {
+              const item = selection[category];
+              return (
+                <View key={category} style={styles.stageSlot}>
+                  {item ? (
+                    <Animated.View key={item.id} entering={FadeInDown.duration(400)}>
+                      <GarmentThumb item={item} style={styles.stageThumb} silhouetteSize={54} />
+                      <Text style={[type.h5, styles.stageName]} numberOfLines={1}>
+                        {item.name}
                       </Text>
-                    ) : null}
-                    <Text style={type.small} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
+                    </Animated.View>
+                  ) : (
+                    <Animated.View entering={FadeIn.duration(300)} style={styles.stageEmpty}>
+                      <Text style={[type.eyebrow, styles.ash, styles.stageEmptyLabel]}>{label}</Text>
+                    </Animated.View>
+                  )}
+                </View>
+              );
+            })}
           </View>
-        ))}
+        </View>
 
         <View style={styles.actions}>
-          <Button label="Surprise me" variant="secondary" onPress={surpriseMe} style={styles.actionButton} />
-          <Button label="Save look" onPress={handleSave} disabled={selectedItems.length === 0} style={styles.actionButton} />
+          <View style={styles.action}>
+            <Button
+              label="Surprise me"
+              variant="secondary"
+              onPress={surprise}
+              icon={<Ionicons name="shuffle" size={14} color={colors.ink} />}
+            />
+          </View>
+          <View style={styles.action}>
+            <Button label="Save look" onPress={save} disabled={chosen.length === 0} />
+          </View>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+
+        {saved ? (
+          <Animated.View entering={FadeInDown.duration(300)} style={styles.savedRow}>
+            <Ionicons name="checkmark" size={13} color={colors.forest} />
+            <Text style={[type.caps, styles.savedLabel]}>Look saved to your archive</Text>
+          </Animated.View>
+        ) : null}
+      </View>
+
+      {RAILS.map(({ category, label }) => {
+        const rail = items.filter((item) => item.category === category);
+        return (
+          <View key={category} style={styles.railSection}>
+            <View style={styles.gutter}>
+              <SectionHeader title={label} />
+            </View>
+            {rail.length === 0 ? (
+              <Text style={[type.body, styles.gutter, styles.railEmpty]}>
+                No {label.toLowerCase()} catalogued yet.
+              </Text>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.railRow}>
+                {rail.map((item) => {
+                  const isSelected = selection[category]?.id === item.id;
+                  return (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => pick(item)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      style={styles.railItem}
+                    >
+                      <View style={[styles.railFrame, isSelected && styles.railFrameSelected]}>
+                        <GarmentThumb item={item} style={styles.railThumb} silhouetteSize={46} />
+                        {isSelected ? (
+                          <View style={styles.railCheck}>
+                            <Ionicons name="checkmark" size={12} color={colors.paper} />
+                          </View>
+                        ) : null}
+                      </View>
+                      <Text style={[type.small, styles.railName]} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        );
+      })}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.paper },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxxl },
-  subtitle: { marginTop: spacing.xs, color: colors.inkMuted },
-  preview: {
-    marginTop: spacing.lg,
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    minHeight: 150,
-    justifyContent: "center",
-    ...shadow.sm,
-  },
-  muted: { color: colors.inkMuted, textAlign: "center" },
-  previewRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: spacing.lg },
-  previewPiece: { alignItems: "center", width: 88, gap: 2 },
-  section: { marginTop: spacing.xl },
-  railRow: { gap: spacing.sm },
-  railItem: {
-    width: 96,
-    backgroundColor: colors.card,
-    borderRadius: radii.md,
-    padding: spacing.sm,
+  gutter: { paddingHorizontal: gutter },
+  ash: { color: colors.ash },
+
+  header: { paddingHorizontal: gutter, paddingTop: spacing.xxl },
+  title: { marginTop: 10 },
+  lede: { marginTop: 14, maxWidth: 320 },
+
+  stageSection: { marginTop: spacing.xl + spacing.xs, paddingHorizontal: gutter },
+  stage: { borderWidth: 1, borderColor: inkAlpha.a10, overflow: "hidden" },
+  stageImage: { ...StyleSheet.absoluteFillObject, opacity: 0.7 },
+  stageRow: { flexDirection: "row", gap: spacing.md, padding: spacing.lg, minHeight: 248 },
+  stageSlot: { flex: 1 },
+  stageThumb: { width: "100%", height: 176 },
+  stageName: { marginTop: spacing.sm, fontSize: 12, lineHeight: 16 },
+  stageEmpty: {
+    height: 176,
     alignItems: "center",
-    gap: 2,
-    ...shadow.sm,
+    justifyContent: "center",
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: inkAlpha.a20,
+    backgroundColor: paperAlpha.a50,
   },
-  railItemSelected: { borderWidth: 2, borderColor: colors.violet },
-  actions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.xl },
-  actionButton: { flex: 1 },
+  stageEmptyLabel: { transform: [{ rotate: "90deg" }] },
+
+  actions: { flexDirection: "row", gap: spacing.md, marginTop: spacing.lg },
+  action: { flex: 1 },
+  savedRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, marginTop: spacing.md },
+  savedLabel: { color: colors.forest },
+
+  railSection: { marginTop: spacing.xxxl },
+  railEmpty: { marginTop: spacing.lg },
+  railRow: { flexDirection: "row", gap: spacing.md, paddingHorizontal: gutter, paddingTop: spacing.lg, paddingBottom: spacing.sm },
+  railItem: { width: 104 },
+  // Ring always laid out, colour-only change — the rail never shifts on select.
+  railFrame: { borderWidth: 1, borderColor: "transparent", padding: 2 },
+  railFrameSelected: { borderColor: colors.ink },
+  railThumb: { width: "100%", height: 132 },
+  railCheck: {
+    position: "absolute",
+    right: 6,
+    top: 6,
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.ink,
+  },
+  railName: { marginTop: spacing.sm },
 });
