@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { API_BASE_URL, API_TIMEOUT_MS } from "@/constants/api";
 import { CATEGORIES, Category, Occasion, WardrobeItem, mockWardrobe, colorPairings } from "@/data/mockWardrobe";
 import { COLOR_SEASONS, SeasonId } from "@/data/colorSeasons";
 
@@ -83,6 +84,51 @@ function pickForCategory(items: WardrobeItem[], category: Category, occasion: Oc
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+/**
+ * On-device styling: the naive colour-pairing rule the app shipped with. Kept as
+ * the fallback for when the recommendation service cannot be reached, so a dead
+ * laptop or a dropped network degrades the suggestion instead of breaking it.
+ *
+ * service/rules.py is a port of this. If you change one, change the other.
+ */
+function buildLocalOutfit(items: WardrobeItem[], occasion: Occasion, includeAccessories: boolean) {
+  const top = pickForCategory(items, "tops", occasion);
+  const bottom = pickForCategory(items, "bottoms", occasion, top?.colorName);
+  const shoes = pickForCategory(items, "shoes", occasion, top?.colorName);
+  const outerwear = Math.random() > 0.5 ? pickForCategory(items, "outerwear", occasion, top?.colorName) : undefined;
+  const accessory = includeAccessories
+    ? pickForCategory(items, "accessories", occasion, top?.colorName)
+    : undefined;
+
+  return [top, bottom, shoes, outerwear, accessory].filter((item): item is WardrobeItem => Boolean(item));
+}
+
+/** Ask the Python recommender for a look. Throws if it is unreachable or slow. */
+async function fetchOutfit(items: WardrobeItem[], occasion: Occasion, includeAccessories: boolean) {
+  // fetch() has no timeout of its own — without this, an unreachable host leaves
+  // the Today screen spinning until the OS gives up, which can be minutes.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/recommend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items, occasion, includeAccessories }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) throw new Error(`Recommender responded ${response.status}`);
+
+    const data = await response.json();
+    if (!Array.isArray(data)) throw new Error("Recommender returned an unexpected shape");
+
+    return data as WardrobeItem[];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export const useWardrobe = create<WardrobeState>()(
   persist<WardrobeState, [], [], PersistedWardrobe>(
     (set, get) => ({
@@ -123,24 +169,19 @@ export const useWardrobe = create<WardrobeState>()(
           outfits: state.outfits.filter((outfit) => outfit.id !== id),
         })),
 
-      // Placeholder logic: random pick filtered by occasion and a naive colour-pairing
-      // rule (data/mockWardrobe.ts#colorPairings). Replace with a fetch() to the
-      // Python recommender — see README "Where the real AI plugs in".
+      // Asks the Python recommender first (see service/), and falls back to the
+      // on-device rule if it cannot be reached. The service is the place to put
+      // the real model; this call site should not need to change again.
       suggestOutfit: async (occasion) => {
         const { items, profile } = get();
-        const top = pickForCategory(items, "tops", occasion);
-        const bottom = pickForCategory(items, "bottoms", occasion, top?.colorName);
-        const shoes = pickForCategory(items, "shoes", occasion, top?.colorName);
-        const outerwear =
-          Math.random() > 0.5 ? pickForCategory(items, "outerwear", occasion, top?.colorName) : undefined;
-        const accessory = profile.preferences.includeAccessories
-          ? pickForCategory(items, "accessories", occasion, top?.colorName)
-          : undefined;
+        const { includeAccessories } = profile.preferences;
 
-        const outfit = [top, bottom, shoes, outerwear, accessory].filter((item): item is WardrobeItem =>
-          Boolean(item)
-        );
-        return outfit;
+        try {
+          return await fetchOutfit(items, occasion, includeAccessories);
+        } catch (error) {
+          console.warn("[stylist] recommender unavailable, styling on-device instead:", error);
+          return buildLocalOutfit(items, occasion, includeAccessories);
+        }
       },
 
       updateProfile: (patch) =>

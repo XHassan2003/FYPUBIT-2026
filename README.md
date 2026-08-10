@@ -40,6 +40,7 @@ app/add-item.tsx         Add Piece modal  — photo picker, category, colour, oc
 app/color-quiz.tsx       Colour Quiz modal — four questions, seasonal palette result
 
 constants/theme.ts       colours, type scale, spacing — the ONLY place for hexes
+constants/api.ts         the recommendation service's address and timeout
 data/mockWardrobe.ts     20 seed items + the placeholder colour-pairing rules
 data/colorSeasons.ts     four seasonal palettes, the quiz questions, computeSeason()
 store/useWardrobe.ts     zustand + persist — items, outfits, profile, suggestOutfit(), matchItemToProfile()
@@ -58,6 +59,8 @@ components/Toggle.tsx           square switch for preferences
 
 assets/images/editorial/  five photographs used by Today, Wardrobe, Builder,
                           Profile and the quiz result
+
+service/                 the Python recommendation service — see service/README.md
 ```
 
 ## Splitting the work across four people
@@ -96,29 +99,27 @@ branch without telling the group. Those two files are the shared contract.
 
 ## Where the real AI plugs in
 
-Two functions in `store/useWardrobe.ts` are placeholders. Replace their bodies
-and every screen keeps working unchanged.
+`suggestOutfit()` is **wired**. It POSTs the wardrobe to the Python service at
+`/recommend` and returns whatever comes back. If the service cannot be reached
+within `API_TIMEOUT_MS`, it logs a warning and styles the look on-device with the
+old rule instead — so a sleeping laptop or a dropped network degrades the
+suggestion rather than breaking the screen.
 
-`suggestOutfit()` is currently random-with-a-filter:
+Set the service address in `constants/api.ts`. It must be your machine's LAN IP,
+not `localhost` — on a phone, `localhost` is the phone. Update it whenever you
+change network.
 
-```ts
-suggestOutfit: async (occasion) => {
-  const res = await fetch('http://<your-ip>:8000/recommend', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items: get().items, occasion }),
-  });
-  return res.json();
-}
-```
+The real model goes in `service/rules.py#build_outfit`. Nothing in the app needs
+to change again for it.
 
-`matchItemToProfile()` currently checks the item's colour name against a
-hardcoded seasonal list in `data/colorSeasons.ts`. It should become a call to the
-same service, scoring the garment properly against the user's analysis.
+Two integration points are still placeholders:
 
-Same for `addItem` — that is where the OpenCV colour-extraction and YOLO
-categorisation call goes once a photo comes in. The hook is marked with a comment
-in `app/add-item.tsx`.
+- `matchItemToProfile()` checks the item's colour name against a hardcoded
+  seasonal list in `data/colorSeasons.ts`. It should become a second endpoint on
+  the service, scoring the garment properly against the user's analysis.
+- `addItem` is where the OpenCV colour-extraction and YOLO categorisation call
+  goes once a photo comes in. The hook is marked with a comment in
+  `app/add-item.tsx`.
 
 ## Status
 
