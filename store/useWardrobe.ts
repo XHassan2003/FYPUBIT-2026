@@ -105,6 +105,10 @@ function buildLocalOutfit(items: WardrobeItem[], occasion: Occasion, includeAcce
 
 /** Ask the Python recommender for a look. Throws if it is unreachable or slow. */
 async function fetchOutfit(items: WardrobeItem[], occasion: Occasion, includeAccessories: boolean) {
+  // Undefined in a production build with no override, or behind a tunnel. Bail
+  // before opening a socket rather than requesting "undefined/recommend".
+  if (!API_BASE_URL) throw new Error("No recommender address configured");
+
   // fetch() has no timeout of its own — without this, an unreachable host leaves
   // the Today screen spinning until the OS gives up, which can be minutes.
   const controller = new AbortController();

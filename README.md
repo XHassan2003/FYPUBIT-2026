@@ -105,9 +105,21 @@ within `API_TIMEOUT_MS`, it logs a warning and styles the look on-device with th
 old rule instead — so a sleeping laptop or a dropped network degrades the
 suggestion rather than breaking the screen.
 
-Set the service address in `constants/api.ts`. It must be your machine's LAN IP,
-not `localhost` — on a phone, `localhost` is the phone. Update it whenever you
-change network.
+The address is worked out at runtime in `constants/api.ts` — no IP to edit. In
+development the app takes the host Metro is serving it from, which is the same
+machine running the service, and points at port 8000 there. Change network,
+change laptop, hand the repo to a teammate: it follows.
+
+To point somewhere else — a deployed service, or one hosted by someone else on
+the team — set `EXPO_PUBLIC_API_URL` in a `.env` file and it wins:
+
+```
+EXPO_PUBLIC_API_URL=http://10.0.0.5:8000
+```
+
+Two cases resolve to no address: a production build with no override, and
+`--tunnel` (where the service is not reachable at Metro's host anyway). Both fall
+back to on-device styling rather than failing.
 
 The real model goes in `service/rules.py#build_outfit`. Nothing in the app needs
 to change again for it.

@@ -62,9 +62,13 @@ outerwear and an accessory.
 Already wired. `suggestOutfit()` in `store/useWardrobe.ts` POSTs here every time
 the user picks an occasion on the Today screen.
 
-The address lives in `constants/api.ts`. Update `API_BASE_URL` to your machine's
-LAN IP whenever you change network — `localhost` will not work, because on the
-phone `localhost` is the phone.
+There is no IP to configure. `constants/api.ts` reads the host Metro is serving
+the app from — which in development is this machine — and points at port 8000
+there. So as long as you run the app and this service on the same laptop, it
+finds you.
+
+To point the app at a service somewhere else, set `EXPO_PUBLIC_API_URL` in a
+`.env` file at the project root.
 
 If the service does not answer within `API_TIMEOUT_MS` (4 seconds), the app logs
 a warning and falls back to its own copy of these rules. That means a demo
