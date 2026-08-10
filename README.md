@@ -42,7 +42,7 @@ app/color-quiz.tsx       Colour Quiz modal — four questions, seasonal palette 
 constants/theme.ts       colours, type scale, spacing — the ONLY place for hexes
 data/mockWardrobe.ts     20 seed items + the placeholder colour-pairing rules
 data/colorSeasons.ts     four seasonal palettes, the quiz questions, computeSeason()
-store/useWardrobe.ts     zustand — items, outfits, profile, suggestOutfit(), matchItemToProfile()
+store/useWardrobe.ts     zustand + persist — items, outfits, profile, suggestOutfit(), matchItemToProfile()
 
 components/Screen.tsx           screen shell: safe area, scroll, sticky headers, entry fade
 components/Sheet.tsx            bottom sheet with drag-to-dismiss
@@ -127,22 +127,31 @@ Done:
 - All six screens, wired to the shared store
 - The colour analysis feature — quiz, seasonal palettes, per-item match checker
 - Full design system and eleven shared components
+- Local persistence — the wardrobe survives an app restart
 - Typecheck, lint and a production bundle all pass
+- Verified on a physical device in Expo Go: added pieces, deletions and the quiz
+  result all survive a force-quit
 
-Next:
+Next: the AI service. See "Where the real AI plugs in" above — that is the whole
+remaining project.
 
-- Persistence — see the first known gap below
-- Test on a physical device
+## Persistence
+
+The store is wrapped in zustand's `persist` middleware, writing to AsyncStorage
+under the key `stylist-wardrobe`. Only `items`, `outfits` and `profile` are
+saved — the actions are rebuilt on each launch.
+
+`app/_layout.tsx` holds the splash screen until both the fonts and the store have
+loaded, so the app never flashes the seed wardrobe before the saved one arrives.
+
+If you change the shape of the persisted data, bump `version` in the persist
+options and add a `migrate` function. Otherwise an already-installed app will
+rehydrate into a state the new code does not expect. To wipe storage during
+development, uninstall the app or call `useWardrobe.persist.clearStorage()`.
 
 ## Known gaps (say these out loud in the demo)
 
-- No persistence: state resets when the app reloads. Fix with `zustand/middleware`
-  `persist` + AsyncStorage in about ten lines when you need it.
 - No auth, no backend, no virtual try-on yet.
 - The pairing notes and the seasonal palettes are hardcoded rules, not a model.
-- `profile.avatarColor` in the store is still `#6C4BD1`, left over from an earlier
-  palette, so the fallback avatar renders violet against the current design.
-- `@expo-google-fonts/fraunces` and `@expo-google-fonts/inter` are still in
-  `package.json` but no longer used anywhere.
 
 Being upfront about these reads far better than being caught out.

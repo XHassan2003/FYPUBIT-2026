@@ -9,9 +9,10 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { colors } from "@/constants/theme";
+import { useWardrobe } from "@/store/useWardrobe";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -31,13 +32,22 @@ export default function RootLayout() {
     Jost_600SemiBold,
   });
 
+  // Reading the store from AsyncStorage is async. Holding the splash until it
+  // finishes means the app never flashes the seed wardrobe before the saved one
+  // arrives. The initial value covers hydration that finished before mount.
+  const [hydrated, setHydrated] = useState(() => useWardrobe.persist.hasHydrated());
+
+  useEffect(() => useWardrobe.persist.onFinishHydration(() => setHydrated(true)), []);
+
+  const ready = fontsLoaded && hydrated;
+
   useEffect(() => {
-    if (fontsLoaded) {
+    if (ready) {
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded]);
+  }, [ready]);
 
-  if (!fontsLoaded) {
+  if (!ready) {
     return null;
   }
 

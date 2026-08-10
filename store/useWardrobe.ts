@@ -1,4 +1,6 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { CATEGORIES, Category, Occasion, WardrobeItem, mockWardrobe, colorPairings } from "@/data/mockWardrobe";
 import { COLOR_SEASONS, SeasonId } from "@/data/colorSeasons";
 
@@ -35,6 +37,13 @@ export interface MatchResult {
   isMatch: boolean;
   score: number;
 }
+
+/**
+ * The slice written to disk. Only data — the actions are rebuilt on every
+ * launch, and persisting them would freeze today's implementations into
+ * storage.
+ */
+type PersistedWardrobe = Pick<WardrobeState, "items" | "outfits" | "profile">;
 
 interface WardrobeState {
   items: WardrobeItem[];
@@ -74,94 +83,111 @@ function pickForCategory(items: WardrobeItem[], category: Category, occasion: Oc
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-export const useWardrobe = create<WardrobeState>((set, get) => ({
-  items: mockWardrobe,
-  outfits: [],
-  profile: {
-    name: "Hassan",
-    avatarColor: "#6C4BD1",
-    styleTags: ["Minimal", "Tailored", "Warm neutrals"],
-    measurements: { height: "5'6\"", chest: "34\"", waist: "27\"", hips: "38\"", shoeSize: "8" },
-    preferences: { notifications: true, useMetric: false, includeAccessories: true },
-  },
-
-  addItem: (item) =>
-    set((state) => ({
-      items: [{ ...item, id: `${item.category}-${Date.now()}` }, ...state.items],
-    })),
-
-  removeItem: (id) =>
-    set((state) => ({
-      items: state.items.filter((item) => item.id !== id),
-    })),
-
-  toggleFavorite: (id) =>
-    set((state) => ({
-      items: state.items.map((item) => (item.id === id ? { ...item, favorite: !item.favorite } : item)),
-    })),
-
-  saveOutfit: (itemIds, occasion) =>
-    set((state) => ({
-      outfits: [{ id: `outfit-${Date.now()}`, itemIds, occasion, createdAt: Date.now() }, ...state.outfits],
-    })),
-
-  removeOutfit: (id) =>
-    set((state) => ({
-      outfits: state.outfits.filter((outfit) => outfit.id !== id),
-    })),
-
-  // Placeholder logic: random pick filtered by occasion and a naive colour-pairing
-  // rule (data/mockWardrobe.ts#colorPairings). Replace with a fetch() to the
-  // Python recommender — see README "Where the real AI plugs in".
-  suggestOutfit: async (occasion) => {
-    const { items, profile } = get();
-    const top = pickForCategory(items, "tops", occasion);
-    const bottom = pickForCategory(items, "bottoms", occasion, top?.colorName);
-    const shoes = pickForCategory(items, "shoes", occasion, top?.colorName);
-    const outerwear = Math.random() > 0.5 ? pickForCategory(items, "outerwear", occasion, top?.colorName) : undefined;
-    const accessory = profile.preferences.includeAccessories
-      ? pickForCategory(items, "accessories", occasion, top?.colorName)
-      : undefined;
-
-    const outfit = [top, bottom, shoes, outerwear, accessory].filter((item): item is WardrobeItem => Boolean(item));
-    return outfit;
-  },
-
-  updateProfile: (patch) =>
-    set((state) => ({
-      profile: { ...state.profile, ...patch },
-    })),
-
-  togglePreference: (key) =>
-    set((state) => ({
+export const useWardrobe = create<WardrobeState>()(
+  persist<WardrobeState, [], [], PersistedWardrobe>(
+    (set, get) => ({
+      items: mockWardrobe,
+      outfits: [],
       profile: {
-        ...state.profile,
-        preferences: { ...state.profile.preferences, [key]: !state.profile.preferences[key] },
+        name: "Hassan",
+        // Ink, matching the palette. Data rather than chrome — it travels with
+        // the profile, so it stays a literal here alongside the garment colours.
+        avatarColor: "#15120E",
+        styleTags: ["Minimal", "Tailored", "Warm neutrals"],
+        measurements: { height: "5'6\"", chest: "34\"", waist: "27\"", hips: "38\"", shoeSize: "8" },
+        preferences: { notifications: true, useMetric: false, includeAccessories: true },
       },
-    })),
 
-  setColorSeason: (season) =>
-    set((state) => ({
-      profile: { ...state.profile, colorSeason: season },
-    })),
+      addItem: (item) =>
+        set((state) => ({
+          items: [{ ...item, id: `${item.category}-${Date.now()}` }, ...state.items],
+        })),
 
-  setAvatarUri: (uri) =>
-    set((state) => ({
-      profile: { ...state.profile, avatarUri: uri },
-    })),
+      removeItem: (id) =>
+        set((state) => ({
+          items: state.items.filter((item) => item.id !== id),
+        })),
 
-  // Placeholder logic: checks the item's colour against the quiz-derived
-  // season's palette (data/colorSeasons.ts). Replace with a fetch() to the
-  // Python recommender — see README "Where the real AI plugs in".
-  matchItemToProfile: (item) => {
-    const { profile } = get();
-    if (!profile.colorSeason) return { isMatch: false, score: pseudoScore(item.id, 45, 65) };
-    const season = COLOR_SEASONS[profile.colorSeason];
-    const isMatch = season.compatibleColorNames.includes(item.colorName);
-    const score = isMatch ? pseudoScore(item.id + season.id, 84, 98) : pseudoScore(item.id + season.id, 38, 63);
-    return { isMatch, score };
-  },
-}));
+      toggleFavorite: (id) =>
+        set((state) => ({
+          items: state.items.map((item) => (item.id === id ? { ...item, favorite: !item.favorite } : item)),
+        })),
+
+      saveOutfit: (itemIds, occasion) =>
+        set((state) => ({
+          outfits: [{ id: `outfit-${Date.now()}`, itemIds, occasion, createdAt: Date.now() }, ...state.outfits],
+        })),
+
+      removeOutfit: (id) =>
+        set((state) => ({
+          outfits: state.outfits.filter((outfit) => outfit.id !== id),
+        })),
+
+      // Placeholder logic: random pick filtered by occasion and a naive colour-pairing
+      // rule (data/mockWardrobe.ts#colorPairings). Replace with a fetch() to the
+      // Python recommender — see README "Where the real AI plugs in".
+      suggestOutfit: async (occasion) => {
+        const { items, profile } = get();
+        const top = pickForCategory(items, "tops", occasion);
+        const bottom = pickForCategory(items, "bottoms", occasion, top?.colorName);
+        const shoes = pickForCategory(items, "shoes", occasion, top?.colorName);
+        const outerwear =
+          Math.random() > 0.5 ? pickForCategory(items, "outerwear", occasion, top?.colorName) : undefined;
+        const accessory = profile.preferences.includeAccessories
+          ? pickForCategory(items, "accessories", occasion, top?.colorName)
+          : undefined;
+
+        const outfit = [top, bottom, shoes, outerwear, accessory].filter((item): item is WardrobeItem =>
+          Boolean(item)
+        );
+        return outfit;
+      },
+
+      updateProfile: (patch) =>
+        set((state) => ({
+          profile: { ...state.profile, ...patch },
+        })),
+
+      togglePreference: (key) =>
+        set((state) => ({
+          profile: {
+            ...state.profile,
+            preferences: { ...state.profile.preferences, [key]: !state.profile.preferences[key] },
+          },
+        })),
+
+      setColorSeason: (season) =>
+        set((state) => ({
+          profile: { ...state.profile, colorSeason: season },
+        })),
+
+      setAvatarUri: (uri) =>
+        set((state) => ({
+          profile: { ...state.profile, avatarUri: uri },
+        })),
+
+      // Placeholder logic: checks the item's colour against the quiz-derived
+      // season's palette (data/colorSeasons.ts). Replace with a fetch() to the
+      // Python recommender — see README "Where the real AI plugs in".
+      matchItemToProfile: (item) => {
+        const { profile } = get();
+        if (!profile.colorSeason) return { isMatch: false, score: pseudoScore(item.id, 45, 65) };
+        const season = COLOR_SEASONS[profile.colorSeason];
+        const isMatch = season.compatibleColorNames.includes(item.colorName);
+        const score = isMatch ? pseudoScore(item.id + season.id, 84, 98) : pseudoScore(item.id + season.id, 38, 63);
+        return { isMatch, score };
+      },
+    }),
+    {
+      name: "stylist-wardrobe",
+      storage: createJSONStorage(() => AsyncStorage),
+      // Bump this and add a `migrate` when the persisted shape changes, so an
+      // installed app doesn't rehydrate into a state its code no longer expects.
+      version: 1,
+      partialize: (state) => ({ items: state.items, outfits: state.outfits, profile: state.profile }),
+    }
+  )
+);
 
 export { CATEGORIES };
 export type { Category, Occasion, WardrobeItem };
