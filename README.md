@@ -11,12 +11,28 @@ Built with Expo SDK 54, expo-router, TypeScript and zustand.
 
 ## Run it
 
+Two terminals, both in this folder. Start the service first — if the app asks
+for a look before it is listening, you get a four-second pause and the on-device
+fallback instead.
+
 ```bash
-npm install
-npx expo start
+npm run service
 ```
 
-Scan the QR code with Expo Go on your phone. Press `a` for an Android emulator.
+```bash
+npm start
+```
+
+Then scan the QR code with Expo Go, or enter the `exp://` address it prints.
+Press `a` for an Android emulator.
+
+First time only, or after a fresh clone:
+
+```bash
+npm install
+```
+
+and the Python environment — see [service/README.md](service/README.md).
 
 Before pushing, check both of these pass:
 

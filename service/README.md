@@ -18,13 +18,24 @@ On macOS or Linux the activate line is `source .venv/bin/activate`.
 
 ## Run
 
+From the project root, once the environment above exists:
+
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+npm run service
 ```
 
-`--host 0.0.0.0` is not optional. The default binds to localhost only, and your
-phone is a different machine — it will time out. This is the single most common
-thing to get stuck on.
+That wrapper exists so nobody has to remember `--host 0.0.0.0`, which is not
+optional — the default binds to localhost only, and your phone is a different
+machine, so it will simply time out. It is the single most common thing to get
+stuck on.
+
+To run uvicorn directly instead, from this folder:
+
+```bash
+.venv/Scripts/python.exe -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+On macOS or Linux that path is `.venv/bin/python`.
 
 Interactive API docs are at `http://localhost:8000/docs` once it is running. You
 can fire a test request from there without touching the app.
