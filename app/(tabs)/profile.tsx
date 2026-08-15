@@ -1,10 +1,12 @@
+import { useAuth, useUser } from "@clerk/expo";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
+import { Button } from "@/components/Button";
 import { Screen } from "@/components/Screen";
 import { SectionHeader } from "@/components/SectionHeader";
 import { Toggle } from "@/components/Toggle";
@@ -29,7 +31,20 @@ export default function ProfileScreen() {
   const togglePreference = useWardrobe((state) => state.togglePreference);
   const setAvatarUri = useWardrobe((state) => state.setAvatarUri);
 
+  const { signOut } = useAuth();
+  const { user } = useUser();
+  const email = user?.primaryEmailAddress?.emailAddress;
+
   const season = profile.colorSeason ? COLOR_SEASONS[profile.colorSeason] : undefined;
+
+  // Confirmed because the wardrobe lives on this device: signing out does not
+  // delete it, but the next person to sign in will not see it either.
+  const handleSignOut = () => {
+    Alert.alert("Sign out?", "You will need to sign in again to reach your wardrobe.", [
+      { text: "Stay signed in", style: "cancel" },
+      { text: "Sign out", style: "destructive", onPress: () => signOut() },
+    ]);
+  };
 
   const pickAvatar = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -152,6 +167,21 @@ export default function ProfileScreen() {
         </View>
       </View>
 
+      <View style={styles.section}>
+        <SectionHeader title="Account" />
+        {email ? (
+          <View style={styles.accountRow}>
+            <Text style={type.body}>Signed in as</Text>
+            <Text style={[type.h5, styles.accountEmail]} numberOfLines={1}>
+              {email}
+            </Text>
+          </View>
+        ) : null}
+        <View style={styles.signOut}>
+          <Button label="Sign out" variant="secondary" onPress={handleSignOut} />
+        </View>
+      </View>
+
       <Text style={[type.footnote, styles.footnote]}>Atelier — your wardrobe, considered.</Text>
     </Screen>
   );
@@ -238,6 +268,19 @@ const styles = StyleSheet.create({
   },
   preferenceText: { flex: 1 },
   preferenceHint: { marginTop: spacing.xs },
+
+  accountRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: inkAlpha.a8,
+    paddingVertical: 14,
+    marginTop: spacing.md,
+  },
+  accountEmail: { flexShrink: 1, fontSize: 15, lineHeight: 20 },
+  signOut: { marginTop: spacing.xl },
 
   footnote: { marginTop: spacing.xxxl, textAlign: "center", paddingHorizontal: gutter },
 });

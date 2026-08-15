@@ -32,7 +32,44 @@ First time only, or after a fresh clone:
 npm install
 ```
 
-and the Python environment — see [service/README.md](service/README.md).
+then the Clerk key below, and the Python environment — see
+[service/README.md](service/README.md).
+
+## Authentication
+
+Sign-up, sign-in and sign-out run through [Clerk](https://clerk.com). The app
+will not start without a key.
+
+1. Create a free application at [dashboard.clerk.com](https://dashboard.clerk.com).
+2. Under **User & authentication**, enable **Email address**, **Username** and
+   **Password**, with email verification by **code**. Turn **Phone number**
+   off — anything left marked *required* that the sign-up form does not collect
+   will stop an account from ever completing, and the failure only shows up
+   after the emailed code has been accepted.
+3. Copy `.env.example` to `.env` and paste the **publishable key** into
+   `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`.
+4. Restart the dev server — env values are inlined at bundle time.
+
+The publishable key is public by design and ends up in the app bundle either
+way, so it is safe to share within the team. `.env` is gitignored so nobody
+commits one by accident; the secret key (`sk_…`) must never go in this project.
+
+```
+app/(auth)/sign-in.tsx   email or username, + password
+app/(auth)/sign-up.tsx   email, username, password, then the emailed code
+constants/auth.ts        reads the key, and turns Clerk errors into readable text
+```
+
+Sign-in takes either identifier, so nobody has to remember which one they used.
+
+Routing is gated in `app/_layout.tsx` with `Stack.Protected`: the tabs and both
+modals are unreachable while signed out, and the auth screens are unreachable
+while signed in. expo-router clears the history on each switch, so the back
+gesture cannot cross the boundary. Sign out lives at the bottom of Profile.
+
+**The wardrobe is still stored per-device, not per-account.** Signing in does not
+fetch anyone's data — that needs the backend, which does not exist yet. Two
+accounts on one phone currently see the same wardrobe.
 
 Before pushing, check both of these pass:
 
@@ -46,7 +83,8 @@ npx expo lint
 ## What is where
 
 ```
-app/_layout.tsx          fonts + gesture root + stack (both modals are headerless)
+app/_layout.tsx          fonts, storage, Clerk, and the signed-in/signed-out route split
+app/(auth)/              sign-in and sign-up, reachable only while signed out
 app/(tabs)/_layout.tsx   custom tab bar with the sliding hairline indicator
 app/(tabs)/index.tsx     Today    — hero, occasion chips, look rail, Colour DNA, stats
 app/(tabs)/wardrobe.tsx  Wardrobe — filters, 2-col masonry, add button, long-press delete
@@ -57,6 +95,7 @@ app/color-quiz.tsx       Colour Quiz modal — four questions, seasonal palette 
 
 constants/theme.ts       colours, type scale, spacing — the ONLY place for hexes
 constants/api.ts         the recommendation service's address and timeout
+constants/auth.ts        the Clerk key, and Clerk errors turned into readable text
 data/mockWardrobe.ts     20 seed items + the placeholder colour-pairing rules
 data/colorSeasons.ts     four seasonal palettes, the quiz questions, computeSeason()
 store/useWardrobe.ts     zustand + persist — items, outfits, profile, suggestOutfit(), matchItemToProfile()
@@ -180,7 +219,9 @@ development, uninstall the app or call `useWardrobe.persist.clearStorage()`.
 
 ## Known gaps (say these out loud in the demo)
 
-- No auth, no backend, no virtual try-on yet.
+- Accounts exist, but nothing is stored against them. The wardrobe is still
+  per-device — that needs a backend and a database.
+- No virtual try-on yet.
 - The pairing notes and the seasonal palettes are hardcoded rules, not a model.
 
 Being upfront about these reads far better than being caught out.
