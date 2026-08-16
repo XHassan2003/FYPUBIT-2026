@@ -12,6 +12,7 @@ import { SectionHeader } from "@/components/SectionHeader";
 import { Toggle } from "@/components/Toggle";
 import { colors, gradients, gutter, inkAlpha, shadow, spacing, type } from "@/constants/theme";
 import { COLOR_SEASONS } from "@/data/colorSeasons";
+import { useDisplayName } from "@/hooks/useDisplayName";
 import { useWardrobe } from "@/store/useWardrobe";
 
 const COVER = require("@/assets/images/editorial/profile-cover.jpg");
@@ -34,6 +35,14 @@ export default function ProfileScreen() {
   const { signOut } = useAuth();
   const { user } = useUser();
   const email = user?.primaryEmailAddress?.emailAddress;
+  const displayName = useDisplayName();
+
+  // `imageUrl` is always populated — Clerk generates an initials avatar when
+  // there is no real photo — so `hasImage` is what separates a Google picture
+  // from a placeholder we would rather draw ourselves, in our own palette.
+  const accountPhoto = user?.hasImage ? user.imageUrl : undefined;
+  // A photo picked here is an explicit choice, so it outranks the account's.
+  const avatarUri = profile.avatarUri ?? accountPhoto;
 
   const season = profile.colorSeason ? COLOR_SEASONS[profile.colorSeason] : undefined;
 
@@ -75,11 +84,11 @@ export default function ProfileScreen() {
           accessibilityLabel="Change profile photo"
           style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
         >
-          {profile.avatarUri ? (
-            <Image source={{ uri: profile.avatarUri }} style={styles.avatarImage} contentFit="cover" />
+          {avatarUri ? (
+            <Image source={{ uri: avatarUri }} style={styles.avatarImage} contentFit="cover" transition={300} />
           ) : (
             <View style={[styles.avatarFallback, { backgroundColor: profile.avatarColor }]}>
-              <Text style={styles.avatarInitial}>{profile.name.slice(0, 1)}</Text>
+              <Text style={styles.avatarInitial}>{displayName.slice(0, 1).toUpperCase()}</Text>
             </View>
           )}
           <View style={styles.avatarBadge}>
@@ -90,7 +99,7 @@ export default function ProfileScreen() {
 
         <View style={styles.identityText}>
           <Text style={[type.eyebrow, styles.ash]}>Your profile</Text>
-          <Text style={[type.h2, styles.name]}>{profile.name}</Text>
+          <Text style={[type.h2, styles.name]}>{displayName}</Text>
         </View>
       </View>
 

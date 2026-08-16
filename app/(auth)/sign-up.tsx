@@ -1,12 +1,11 @@
 import { useSignUp } from "@clerk/expo";
 import { Link } from "expo-router";
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { AuthField } from "@/components/AuthField";
-import { Button } from "@/components/Button";
+import { StyleSheet, Text, View } from "react-native";
+import { AuthDivider, AuthInput, AuthLayout, AuthNotice, AuthSubmit } from "@/components/AuthLayout";
+import { GoogleButton } from "@/components/GoogleButton";
 import { authErrorMessage } from "@/constants/auth";
-import { colors, gutter, spacing, type } from "@/constants/theme";
+import { auth, fonts, spacing } from "@/constants/theme";
 
 export default function SignUpScreen() {
   const { signUp, fetchStatus } = useSignUp();
@@ -77,128 +76,157 @@ export default function SignUpScreen() {
     setFormError(null);
   };
 
+  if (awaitingCode) {
+    return (
+      <AuthLayout
+        label="Verify your email"
+        title={"Check your inbox\nto continue."}
+        subtitle={`We sent a six-digit code to ${emailAddress.trim()}. Enter it to finish setting up your styling profile.`}
+        onBack={startOver}
+      >
+        <AuthInput
+          label="Verification code"
+          value={code}
+          onChangeText={(v) => {
+            setCode(v);
+            setFormError(null);
+          }}
+          placeholder="––––––"
+          keyboardType="number-pad"
+          autoComplete="one-time-code"
+          textContentType="oneTimeCode"
+          onSubmitEditing={submitCode}
+          returnKeyType="go"
+          maxLength={6}
+          center
+        />
+
+        {formError ? <AuthNotice message={formError} tone="error" /> : null}
+
+        <View style={styles.submit}>
+          <AuthSubmit
+            label="Verify and continue"
+            busyLabel="Verifying"
+            onPress={submitCode}
+            busy={busy}
+            disabled={!canSubmitCode}
+          />
+        </View>
+      </AuthLayout>
+    );
+  }
+
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={[type.eyebrow, styles.ash]}>Atelier</Text>
+    <AuthLayout
+      label="Create an account"
+      title={"Begin your styling profile."}
+      subtitle="One account keeps your wardrobe, your looks and your colour analysis in one place."
+      footer={
+        <View style={styles.footer}>
+          <Text style={styles.footerLabel}>Already have an account? </Text>
+          <Link href="/(auth)/sign-in">
+            <Text style={styles.footerLink}>Sign in</Text>
+          </Link>
+        </View>
+      }
+    >
+      <View style={styles.fields}>
+        <AuthInput
+          label="Email"
+          value={emailAddress}
+          onChangeText={(v) => {
+            setEmailAddress(v);
+            setFormError(null);
+          }}
+          placeholder="you@example.com"
+          autoCapitalize="none"
+          autoComplete="email"
+          keyboardType="email-address"
+          textContentType="emailAddress"
+        />
+        <AuthInput
+          label="Username"
+          value={username}
+          onChangeText={(v) => {
+            setUsername(v);
+            setFormError(null);
+          }}
+          placeholder="How you appear in the app"
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="username-new"
+          textContentType="username"
+        />
+        <AuthInput
+          label="Password"
+          value={password}
+          onChangeText={(v) => {
+            setPassword(v);
+            setFormError(null);
+          }}
+          placeholder="At least 8 characters"
+          autoCapitalize="none"
+          autoComplete="new-password"
+          secureTextEntry
+          textContentType="newPassword"
+          onSubmitEditing={submitDetails}
+          returnKeyType="go"
+          hint="Use at least 8 characters, with a number for extra strength."
+        />
+      </View>
 
-          {awaitingCode ? (
-            <>
-              <Text style={[type.hero, styles.title]}>Check your</Text>
-              <Text style={type.heroItalic}>inbox.</Text>
-              <Text style={[type.body, styles.lede]}>
-                We sent a code to {emailAddress.trim()}. Enter it to finish creating your account.
-              </Text>
+      {formError ? <AuthNotice message={formError} tone="error" /> : null}
 
-              <View style={styles.fields}>
-                <AuthField
-                  label="Verification code"
-                  value={code}
-                  onChangeText={setCode}
-                  placeholder="123456"
-                  keyboardType="number-pad"
-                  autoComplete="one-time-code"
-                  textContentType="oneTimeCode"
-                  onSubmitEditing={submitCode}
-                  returnKeyType="go"
-                />
-              </View>
+      <View style={styles.submit}>
+        <AuthSubmit
+          label="Create account"
+          busyLabel="Creating account"
+          onPress={submitDetails}
+          busy={busy}
+          disabled={!canSubmitDetails}
+        />
+      </View>
 
-              {formError ? <Text style={[type.small, styles.error]}>{formError}</Text> : null}
+      <View style={styles.divider}>
+        <AuthDivider />
+      </View>
 
-              <View style={styles.submit}>
-                <Button label={busy ? "Verifying…" : "Verify and continue"} onPress={submitCode} disabled={!canSubmitCode} />
-              </View>
+      <GoogleButton onError={setFormError} disabled={busy} />
 
-              <Pressable onPress={startOver} style={styles.startOver}>
-                <Text style={[type.caps, styles.ash]}>Use a different email</Text>
-              </Pressable>
-            </>
-          ) : (
-            <>
-              <Text style={[type.hero, styles.title]}>Start your</Text>
-              <Text style={type.heroItalic}>wardrobe.</Text>
-              <Text style={[type.body, styles.lede]}>
-                An account keeps your pieces and your colour analysis together.
-              </Text>
-
-              <View style={styles.fields}>
-                <AuthField
-                  label="Email"
-                  value={emailAddress}
-                  onChangeText={setEmailAddress}
-                  placeholder="you@example.com"
-                  autoCapitalize="none"
-                  autoComplete="email"
-                  keyboardType="email-address"
-                  textContentType="emailAddress"
-                />
-                <View style={styles.fieldGap}>
-                  <AuthField
-                    label="Username"
-                    value={username}
-                    onChangeText={setUsername}
-                    placeholder="How you appear in the app"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="username-new"
-                    textContentType="username"
-                  />
-                </View>
-                <View style={styles.fieldGap}>
-                  <AuthField
-                    label="Password"
-                    value={password}
-                    onChangeText={setPassword}
-                    placeholder="At least 8 characters"
-                    autoCapitalize="none"
-                    autoComplete="new-password"
-                    secureTextEntry
-                    textContentType="newPassword"
-                    onSubmitEditing={submitDetails}
-                    returnKeyType="go"
-                  />
-                </View>
-              </View>
-
-              {formError ? <Text style={[type.small, styles.error]}>{formError}</Text> : null}
-
-              <View style={styles.submit}>
-                <Button
-                  label={busy ? "Creating…" : "Create account"}
-                  onPress={submitDetails}
-                  disabled={!canSubmitDetails}
-                />
-              </View>
-
-              <View style={styles.switch}>
-                <Text style={type.small}>Already have an account?</Text>
-                <Link href="/(auth)/sign-in" style={styles.link}>
-                  <Text style={[type.caps, styles.linkLabel]}>Sign in</Text>
-                </Link>
-              </View>
-            </>
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      <Text style={styles.legal}>
+        By continuing you agree to let Atelier style you from your own wardrobe.
+      </Text>
+    </AuthLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.paper },
-  flex: { flex: 1 },
-  content: { paddingHorizontal: gutter, paddingTop: spacing.xxxl, paddingBottom: spacing.xxxl },
-  ash: { color: colors.ash },
-  title: { marginTop: spacing.xl },
-  lede: { marginTop: spacing.lg, maxWidth: 300 },
-  fields: { marginTop: spacing.xxxl },
-  fieldGap: { marginTop: spacing.xl + spacing.xs },
-  error: { marginTop: spacing.xl, color: colors.ember },
-  submit: { marginTop: spacing.xxxl },
-  startOver: { marginTop: spacing.xl, alignSelf: "flex-start" },
-  switch: { marginTop: spacing.xl, flexDirection: "row", alignItems: "center", gap: spacing.md },
-  link: { paddingVertical: spacing.xs },
-  linkLabel: { color: colors.ink },
+  fields: { gap: 20 },
+  submit: { marginTop: 28 },
+  divider: { marginVertical: spacing.xl },
+  legal: {
+    marginTop: spacing.xl,
+    textAlign: "center",
+    fontFamily: fonts.light,
+    fontSize: 11.5,
+    lineHeight: 17,
+    color: auth.taupeA80,
+  },
+  footer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: auth.espressoA10,
+    paddingTop: spacing.xl,
+  },
+  footerLabel: { fontFamily: fonts.light, fontSize: 13, lineHeight: 20, color: auth.taupe },
+  footerLink: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    lineHeight: 20,
+    color: auth.espresso,
+    textDecorationLine: "underline",
+  },
 });

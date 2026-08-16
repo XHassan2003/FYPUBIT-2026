@@ -62,6 +62,11 @@ function RootNavigator() {
       <Stack.Protected guard={!isSignedIn}>
         <Stack.Screen name="(auth)" />
       </Stack.Protected>
+
+      {/* Deliberately outside both guards: the Google redirect deep-links back
+          in during the switch from signed out to signed in, so it has to be
+          routable either way. */}
+      <Stack.Screen name="sso-callback" options={{ animation: "none" }} />
     </Stack>
   );
 }

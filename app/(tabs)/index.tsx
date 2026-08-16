@@ -21,6 +21,7 @@ import { SectionHeader } from "@/components/SectionHeader";
 import { colors, gradients, gutter, inkAlpha, spacing, type } from "@/constants/theme";
 import { COLOR_SEASONS } from "@/data/colorSeasons";
 import { OCCASIONS, Occasion, WardrobeItem } from "@/data/mockWardrobe";
+import { useDisplayName } from "@/hooks/useDisplayName";
 import { useWardrobe } from "@/store/useWardrobe";
 
 const HERO = require("@/assets/images/editorial/today-hero.jpg");
@@ -75,6 +76,7 @@ export default function TodayScreen() {
   const outfits = useWardrobe((state) => state.outfits);
   const profile = useWardrobe((state) => state.profile);
   const suggestOutfit = useWardrobe((state) => state.suggestOutfit);
+  const displayName = useDisplayName();
 
   const [occasion, setOccasion] = useState<Occasion | null>(null);
   const [look, setLook] = useState<WardrobeItem[]>([]);
@@ -122,7 +124,7 @@ export default function TodayScreen() {
         <View style={styles.headline}>
           <Animated.View entering={FadeInDown.duration(700).delay(150)}>
             <Text style={type.hero}>{greeting()}</Text>
-            <Text style={type.heroItalic}>{profile.name}.</Text>
+            <Text style={type.heroItalic}>{displayName}.</Text>
           </Animated.View>
           <Text style={[type.body, styles.lede]}>
             {items.length} pieces in rotation. Tell us where the day takes you and we will put the look together.

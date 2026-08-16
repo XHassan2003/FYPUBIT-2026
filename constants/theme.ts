@@ -154,3 +154,37 @@ export const type = {
 // Shared easing for every transition in the app. Matches the web build's
 // cubic-bezier(0.22, 1, 0.36, 1) — a quick departure with a long settle.
 export const easeOutExpo = { x1: 0.22, y1: 1, x2: 0.36, y2: 1 };
+
+// ---------------------------------------------------------------------------
+// Auth screens only.
+//
+// Sign In and Sign Up run a softer, warmer variant of the house style: rounded
+// fields, a pill submit, and a browner ink than the near-black used everywhere
+// else. Scoped to its own block so the rest of the app cannot drift into it by
+// accident — nothing outside `app/(auth)` and `components/AuthLayout.tsx`
+// should import from here.
+// ---------------------------------------------------------------------------
+export const auth = {
+  cream: colors.paper,
+  espresso: "#2B2320",
+  espressoPressed: "#3A302B",
+  taupe: "#8C8076",
+  clay: "#B07B62",
+  linen: "#EDE6DC",
+  alert: "#A8463A",
+  field: colors.card,
+
+  // Espresso and alert at the opacities the web build wrote as `espresso/10`.
+  espressoA10: "rgba(43, 35, 32, 0.10)",
+  espressoA12: "rgba(43, 35, 32, 0.12)",
+  espressoA35: "rgba(43, 35, 32, 0.35)",
+  taupeA50: "rgba(140, 128, 118, 0.50)",
+  taupeA80: "rgba(140, 128, 118, 0.80)",
+  alertA08: "rgba(168, 70, 58, 0.08)",
+  alertA50: "rgba(168, 70, 58, 0.50)",
+  cardEdge: "rgba(255, 255, 255, 0.70)",
+
+  // The one place in the app that rounds anything.
+  radius: 14,
+  pill: 999,
+};
