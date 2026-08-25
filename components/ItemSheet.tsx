@@ -40,17 +40,20 @@ export function ItemSheet({ item, onClose }: ItemSheetProps) {
 
   const season = profile.colorSeason ? COLOR_SEASONS[profile.colorSeason] : undefined;
 
-  // The pause is theatre, not latency — it gives the analysis weight before the
-  // score lands. The scoring itself is synchronous.
-  const runMatch = () => {
+  // The pause used to be theatre — a 650ms timer over a synchronous lookup.
+  // The scoring is a real round-trip to the service now, so the wait is the
+  // actual wait. It resolves in well under `API_TIMEOUT_MS` either way: the
+  // store falls back to on-device scoring rather than leaving this spinning.
+  const runMatch = async () => {
     if (!item) return;
     setChecking(true);
-    setTimeout(() => {
-      const next = matchItemToProfile(item);
+    try {
+      const next = await matchItemToProfile(item);
       setResult(next);
-      setChecking(false);
       barWidth.value = withTiming(next.score, { duration: 900 });
-    }, 650);
+    } finally {
+      setChecking(false);
+    }
   };
 
   const barStyle = useAnimatedStyle(() => ({ width: `${barWidth.value}%` }));

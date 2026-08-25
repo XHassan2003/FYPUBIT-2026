@@ -128,6 +128,13 @@ npx tsc --noEmit
 npx expo lint
 ```
 
+If you touched anything under `service/`, run its suite too — from that folder,
+and it takes under a second:
+
+```bash
+pytest
+```
+
 ---
 
 ## What is where
@@ -169,7 +176,8 @@ components/Toggle.tsx           square switch for preferences
 assets/images/editorial/  five photographs used by Today, Wardrobe, Builder,
                           Profile and the quiz result
 
-service/                 the Python recommendation service — see service/README.md
+service/                 the Python service — /recommend, /match, and the colour maths
+                         behind them; see service/README.md
 ```
 
 ## Splitting the work across four people
@@ -238,11 +246,23 @@ back to on-device styling rather than failing.
 The real model goes in `service/rules.py#build_outfit`. Nothing in the app needs
 to change again for it.
 
-Two integration points are still placeholders:
+`matchItemToProfile()` is **wired too**, and unlike `/recommend` the thing behind
+it is not a placeholder. It POSTs the garment and the user's season to `/match`,
+where `service/color.py` converts both to CIE Lab and measures the CIEDE2000
+distance to the nearest colour in the palette. Same fallback contract as
+`suggestOutfit()`: unreachable or slow, and it scores on-device instead.
 
-- `matchItemToProfile()` checks the item's colour name against a hardcoded
-  seasonal list in `data/colorSeasons.ts`. It should become a second endpoint on
-  the service, scoring the garment properly against the user's analysis.
+The season travels in the request rather than being duplicated in Python, so
+`data/colorSeasons.ts` stays the only definition of the palettes. See
+[service/README.md](service/README.md) for how the score is derived — it is the
+part of this project most worth being able to explain out loud.
+
+What that replaced is worth knowing, because the fallback still does it: the old
+score was `pseudoScore()`, a hash of the item's id scaled into a flattering
+range. Stable per garment, and entirely meaningless.
+
+One integration point is still a placeholder:
+
 - `addItem` is where the OpenCV colour-extraction and YOLO categorisation call
   goes once a photo comes in. The hook is marked with a comment in
   `app/add-item.tsx`.
@@ -255,6 +275,9 @@ Done:
 - The colour analysis feature — quiz, seasonal palettes, per-item match checker
 - Full design system and thirteen shared components
 - Email and Google sign-in, both verified on a device
+- Real colour matching — CIEDE2000 in CIE Lab, served from `/match`, and checked
+  end-to-end from a device: the same garment scores differently against two
+  seasons, which the old hashed score could not do
 - Local persistence — the wardrobe survives an app restart
 - Typecheck, lint and a production bundle all pass
 - Verified on a physical device in Expo Go: added pieces, deletions and the quiz
@@ -282,6 +305,11 @@ development, uninstall the app or call `useWardrobe.persist.clearStorage()`.
 - Accounts exist, but nothing is stored against them. The wardrobe is still
   per-device — that needs a backend and a database.
 - No virtual try-on yet.
-- The pairing notes and the seasonal palettes are hardcoded rules, not a model.
+- Outfit *pairing* is still a hardcoded rule, not a model — `build_outfit` picks
+  at random within a category. Colour *matching* is real maths now; do not let
+  the two get conflated when you present it.
+- The seasonal palettes themselves are still authored by hand. The scoring
+  against them is measured, but which six colours make up "True Winter" is a
+  designer's list, not an analysis.
 
 Being upfront about these reads far better than being caught out.

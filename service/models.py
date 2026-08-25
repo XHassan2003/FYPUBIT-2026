@@ -31,3 +31,40 @@ class RecommendRequest(BaseModel):
     items: list[WardrobeItem]
     occasion: str
     include_accessories: bool = Field(default=True, alias="includeAccessories")
+
+
+class SeasonPayload(BaseModel):
+    """The season the app derived from the colour quiz.
+
+    Sent with every request rather than duplicated here on purpose. The palettes
+    live in data/colorSeasons.ts, and a second copy in Python would be one more
+    pair of files to keep in step — the trap COLOR_PAIRINGS in rules.py is
+    already stuck in.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: Optional[str] = None
+    palette: list[str]
+    compatible_color_names: list[str] = Field(default_factory=list, alias="compatibleColorNames")
+
+
+class MatchRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    item: WardrobeItem
+    season: SeasonPayload
+
+
+class MatchResponse(BaseModel):
+    """What the app's `MatchResult` needs, plus the workings behind it."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    is_match: bool = Field(alias="isMatch")
+    score: int
+    # Kept in the response because "87%" means nothing on its own — the distance
+    # and the colour it was measured against are what make the score defensible.
+    delta_e: float = Field(alias="deltaE")
+    nearest_color: str = Field(alias="nearestColor")

@@ -8,10 +8,11 @@ swapping the app over is a one-function change.
 Run it:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from models import RecommendRequest, WardrobeItem
+from color import score_item_against_season
+from models import MatchRequest, MatchResponse, RecommendRequest, WardrobeItem
 from rules import build_outfit
 
 app = FastAPI(
@@ -47,4 +48,31 @@ def recommend(request: RecommendRequest) -> list[WardrobeItem]:
         items=request.items,
         occasion=request.occasion,
         include_accessories=request.include_accessories,
+    )
+
+
+@app.post("/match", response_model=MatchResponse)
+def match(request: MatchRequest) -> MatchResponse:
+    """Score one garment against the user's seasonal palette.
+
+    Unlike /recommend, this is not a placeholder: the score is a real CIEDE2000
+    measurement in CIE Lab (see color.py), not the hash of an item id the app
+    used to show.
+    """
+    try:
+        outcome = score_item_against_season(
+            item_hex=request.item.color,
+            item_color_name=request.item.color_name,
+            palette=request.season.palette,
+            compatible_color_names=request.season.compatible_color_names,
+        )
+    except ValueError as err:
+        # A colour the maths cannot read is a bad request, not a server fault.
+        raise HTTPException(status_code=422, detail=str(err)) from err
+
+    return MatchResponse(
+        isMatch=outcome.is_match,
+        score=outcome.score,
+        deltaE=outcome.delta_e,
+        nearestColor=outcome.nearest_color,
     )

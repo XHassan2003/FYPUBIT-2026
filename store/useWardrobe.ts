@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { API_BASE_URL, API_TIMEOUT_MS } from "@/constants/api";
 import { CATEGORIES, Category, Occasion, WardrobeItem, mockWardrobe, colorPairings } from "@/data/mockWardrobe";
-import { COLOR_SEASONS, SeasonId } from "@/data/colorSeasons";
+import { COLOR_SEASONS, ColorSeason, SeasonId } from "@/data/colorSeasons";
 
 export interface Outfit {
   id: string;
@@ -37,6 +37,13 @@ export interface Profile {
 export interface MatchResult {
   isMatch: boolean;
   score: number;
+  /**
+   * The service's workings: the CIEDE2000 distance to the closest colour in the
+   * season's palette, and which colour that was. Absent when the score came
+   * from the on-device fallback, which has no distance to report.
+   */
+  deltaE?: number;
+  nearestColor?: string;
 }
 
 /**
@@ -60,7 +67,7 @@ interface WardrobeState {
   togglePreference: (key: keyof Profile["preferences"]) => void;
   setColorSeason: (season: SeasonId) => void;
   setAvatarUri: (uri: string) => void;
-  matchItemToProfile: (item: WardrobeItem) => MatchResult;
+  matchItemToProfile: (item: WardrobeItem) => Promise<MatchResult>;
 }
 
 // Deterministic pseudo-score so the same item always shows the same match
@@ -131,6 +138,70 @@ async function fetchOutfit(items: WardrobeItem[], occasion: Occasion, includeAcc
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Ask the service to score a garment against the user's season. Throws if it is
+ * unreachable or slow, exactly like fetchOutfit — the caller falls back.
+ *
+ * The season travels with the request rather than living on the Python side, so
+ * data/colorSeasons.ts stays the only definition of the palettes.
+ */
+async function fetchMatch(item: WardrobeItem, season: ColorSeason): Promise<MatchResult> {
+  if (!API_BASE_URL) throw new Error("No recommender address configured");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/match`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        item,
+        season: {
+          id: season.id,
+          name: season.name,
+          palette: season.palette,
+          compatibleColorNames: season.compatibleColorNames,
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) throw new Error(`Matcher responded ${response.status}`);
+
+    const data = await response.json();
+    if (typeof data?.isMatch !== "boolean" || typeof data?.score !== "number") {
+      throw new Error("Matcher returned an unexpected shape");
+    }
+
+    return {
+      isMatch: data.isMatch,
+      score: data.score,
+      deltaE: typeof data.deltaE === "number" ? data.deltaE : undefined,
+      nearestColor: typeof data.nearestColor === "string" ? data.nearestColor : undefined,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * The pre-service scoring, kept as the fallback. It only ever compared colour
+ * names against a hardcoded list and dressed the result up with a hash of the
+ * item id, so treat the number it returns as decoration — the real one comes
+ * from the service.
+ */
+function localMatch(item: WardrobeItem, season: ColorSeason | undefined): MatchResult {
+  if (!season) return { isMatch: false, score: pseudoScore(item.id, 45, 65) };
+
+  const isMatch = season.compatibleColorNames.includes(item.colorName);
+  const score = isMatch
+    ? pseudoScore(item.id + season.id, 84, 98)
+    : pseudoScore(item.id + season.id, 38, 63);
+
+  return { isMatch, score };
 }
 
 export const useWardrobe = create<WardrobeState>()(
@@ -211,16 +282,23 @@ export const useWardrobe = create<WardrobeState>()(
           profile: { ...state.profile, avatarUri: uri },
         })),
 
-      // Placeholder logic: checks the item's colour against the quiz-derived
-      // season's palette (data/colorSeasons.ts). Replace with a fetch() to the
-      // Python recommender — see README "Where the real AI plugs in".
-      matchItemToProfile: (item) => {
+      // Wired to the service, which measures the garment against the season's
+      // palette in CIE Lab. The local rule is only the fallback for when it
+      // cannot be reached.
+      matchItemToProfile: async (item) => {
         const { profile } = get();
-        if (!profile.colorSeason) return { isMatch: false, score: pseudoScore(item.id, 45, 65) };
-        const season = COLOR_SEASONS[profile.colorSeason];
-        const isMatch = season.compatibleColorNames.includes(item.colorName);
-        const score = isMatch ? pseudoScore(item.id + season.id, 84, 98) : pseudoScore(item.id + season.id, 38, 63);
-        return { isMatch, score };
+        const season = profile.colorSeason ? COLOR_SEASONS[profile.colorSeason] : undefined;
+
+        // No quiz result means no palette to measure against, so there is
+        // nothing for the service to do either.
+        if (!season) return localMatch(item, undefined);
+
+        try {
+          return await fetchMatch(item, season);
+        } catch (error) {
+          console.warn("[stylist] matcher unavailable, scoring on-device instead:", error);
+          return localMatch(item, season);
+        }
       },
     }),
     {
