@@ -121,6 +121,13 @@ gesture cannot cross the boundary. Sign out lives at the bottom of Profile.
 fetch anyone's data — that needs the backend, which does not exist yet. Two
 accounts on one phone currently see the same wardrobe.
 
+⚠️ **Fast Refresh does not reliably pick up changes to `components/ItemSheet.tsx`.**
+It is handed to `Screen` as the `overlay` prop rather than rendered inline, and
+React Refresh quietly keeps the old version — the app looks like it ignored your
+edit. This has already cost one debugging session chasing a bug that was not
+there. After editing it, reload properly (`r` in the Metro terminal, or restart
+with `npx expo start --clear`) before concluding anything.
+
 Before pushing, check both of these pass:
 
 ```bash
@@ -243,8 +250,28 @@ Two cases resolve to no address: a production build with no override, and
 `--tunnel` (where the service is not reachable at Metro's host anyway). Both fall
 back to on-device styling rather than failing.
 
-The real model goes in `service/rules.py#build_outfit`. Nothing in the app needs
-to change again for it.
+`build_outfit` is no longer a placeholder either. It shortlists per category,
+scores candidate outfits on colour harmony between the pieces, fit to the
+user's season and occasion suitability, and returns one of the best few — the
+shortlist rather than the single winner, so "Surprise me" still surprises. The
+user's season is sent with every `/recommend` call and feeds the second of
+those terms. See [service/README.md](service/README.md) for the weights and the
+reasoning.
+
+**The offline fallback is the weak half, and says so.** `buildLocalOutfit()` in
+the store still runs the old random-within-category rule when the service
+cannot be reached, which is no longer equivalent to what the service does.
+`suggestOutfit()` therefore returns `{ items, styledOffline }` rather than a
+bare array, and Today shows a "Styled offline" note above the look when the
+flag is set. The flag travels with the result instead of living in the store,
+so it cannot go stale against the look on screen.
+
+The match checker does the same, through `scoredOffline` on `MatchResult`, but
+it goes further: offline it shows **no percentage at all**. The in-or-out
+verdict there is still real — it comes from the season's own list of colour
+names — but the number is `pseudoScore()`, a hash of the item's id, and a
+fabricated figure reads as more authoritative than a measured one. So the
+verdict stays, the number and its bar are hidden, and a note says why.
 
 `matchItemToProfile()` is **wired too**, and unlike `/recommend` the thing behind
 it is not a placeholder. It POSTs the garment and the user's season to `/match`,
@@ -278,6 +305,11 @@ Done:
 - Real colour matching — CIEDE2000 in CIE Lab, served from `/match`, and checked
   end-to-end from a device: the same garment scores differently against two
   seasons, which the old hashed score could not do
+- Outfit selection by scoring rather than sampling — harmony, season and
+  occasion, served from `/recommend`
+- Both offline fallbacks say so on screen, checked on a device with the service
+  stopped: Today shows "Styled offline", and the match checker drops the
+  percentage entirely rather than showing a hashed one
 - Local persistence — the wardrobe survives an app restart
 - Typecheck, lint and a production bundle all pass
 - Verified on a physical device in Expo Go: added pieces, deletions and the quiz
@@ -305,11 +337,18 @@ development, uninstall the app or call `useWardrobe.persist.clearStorage()`.
 - Accounts exist, but nothing is stored against them. The wardrobe is still
   per-device — that needs a backend and a database.
 - No virtual try-on yet.
-- Outfit *pairing* is still a hardcoded rule, not a model — `build_outfit` picks
-  at random within a category. Colour *matching* is real maths now; do not let
-  the two get conflated when you present it.
+- Outfit selection is a scoring function, not a learned model. It measures real
+  colour relationships, but the weights behind it were reasoned about and
+  sanity-checked against the seed wardrobe, not fitted to anyone's preferences.
+  Say "rule-based, but measured" rather than letting it be heard as "AI".
 - The seasonal palettes themselves are still authored by hand. The scoring
   against them is measured, but which six colours make up "True Winter" is a
   designer's list, not an analysis.
+- **Web does not run.** iOS and Android are fine; `npx expo export` produces a
+  web bundle too, and it builds, but it throws
+  `Cannot use 'import.meta' outside a module` before rendering anything. The
+  generated `index.html` loads the bundle as a classic script while zustand's
+  devtools middleware — pulled in alongside `persist` from `zustand/middleware` —
+  ships `import.meta.env`. Only mention web if someone asks.
 
 Being upfront about these reads far better than being caught out.

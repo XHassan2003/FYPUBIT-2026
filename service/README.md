@@ -1,9 +1,10 @@
 # Recommendation service
 
-The Python half of the project. Two endpoints: `/recommend` still runs the same
-placeholder rules the app has locally — that was on purpose, to get the
-round-trip working before the logic — and `/match` is the first one doing real
-work, scoring a garment against the user's seasonal palette in CIE Lab.
+The Python half of the project. Two endpoints, both doing real work now:
+`/match` scores one garment against the user's seasonal palette, and
+`/recommend` assembles a whole outfit by scoring candidates on colour harmony,
+season fit and occasion. Both measure colour in CIE Lab rather than looking it
+up in a table.
 
 ## Setup
 
@@ -67,9 +68,55 @@ common culprit), or you forgot `--host 0.0.0.0`.
 {
   "items": [ /* WardrobeItem[], exactly as the app stores them */ ],
   "occasion": "work",
-  "includeAccessories": true
+  "includeAccessories": true,
+  "season": { /* the same shape /match takes, or null */ }
 }
 ```
+
+`season` is optional — the user may not have taken the colour quiz, and an
+older build of the app will not send it. When it is absent the season term
+abstains and the outfit is chosen on harmony and occasion alone.
+
+### How the outfit is chosen
+
+`rules.py`. Candidate outfits are built and scored; one of the best is
+returned.
+
+1. **Shortlist per category.** Garments meant for the occasion always beat
+   garments that merely could be worn — running shoes are not office shoes
+   because they happen to be the right grey. The rest of a category is only
+   reached when nothing in it suits, so a sparse wardrobe still produces a
+   complete outfit rather than a gap. Ten per category survive.
+2. **Score each core** (top, bottom, shoes) on three terms:
+   - **colour harmony**, 45% — every piece against every other, not everything
+     against the top
+   - **season fit**, 35% — the same measurement `/match` returns
+   - **occasion fit**, 20% — close to a hard filter already, so it trails
+3. **Choose from the best few.** Not the single best: that would make the same
+   wardrobe and occasion produce the same answer forever, and "Surprise me"
+   static. Cores within two points of the leader share the choice, so variety
+   only ever comes from outfits that are genuinely close.
+4. **Add outerwear and an accessory** only if they earn a place against the
+   chosen core, and only from garments meant for the occasion. A coat that
+   merely does not clash is not a reason to carry a coat, and a blazer has no
+   business over gym clothes however well it matches them.
+
+Scoring the core as a set is what fixes the old anchoring bug, where a shirt
+could suit both the trousers and the shoes while those two clashed with each
+other.
+
+**Harmony is not "closer is better".** Matching a garment to a palette wants
+distance minimised; two garments worn together do not. An outfit in one flat
+colour is not the best possible outfit and the most distant colour is usually a
+clash. `color.py#harmony_score` works in LCh: below a chroma threshold a colour
+behaves as a neutral and goes with anything, and above it, hues that are
+close (within 30°) or near-opposite (beyond 150°) read well while the middle is
+the clash zone. Lightness separation is worth the remaining 35%.
+
+**Speed.** Brute force over the shortlists, with the two expensive measurements
+memoised per call. A 200-item wardrobe takes about 13ms per outfit — nowhere
+near the app's 4-second timeout. The cache matters: without it the same call
+took 192ms, because the season score was being recomputed for every candidate.
 
 The response is a JSON array of the items that make up the outfit — a subset of
 what was sent in, in wearing order: top, bottom, shoes, then optionally
@@ -170,15 +217,17 @@ no log line means the app never reached you.
 ## What is where
 
 ```
-main.py               FastAPI app, CORS, the three endpoints
-models.py             request/response shapes; camelCase aliases for the RN client
-rules.py              placeholder styling logic, ported from the app's store
-color.py              Lab conversion, CIEDE2000, and the palette scoring — real, not a placeholder
-conftest.py           puts this folder on the import path for the suite
-tests/test_color.py   the colour maths, against published reference data
-tests/test_match.py   the /match endpoint, over the real request shapes
-requirements.txt      pinned to major versions
-requirements-dev.txt  pytest and httpx2, needed only to run the suite
+main.py                  FastAPI app, CORS, the three endpoints
+models.py                request/response shapes; camelCase aliases for the RN client
+rules.py                 outfit assembly — shortlist, score, choose
+color.py                 Lab conversion, CIEDE2000, palette scoring, garment harmony
+conftest.py              puts this folder on the import path for the suite
+tests/test_color.py      the colour maths, against published reference data
+tests/test_match.py      the /match endpoint, over the real request shapes
+tests/test_recommend.py  the /recommend contract — shapes and ordering
+tests/test_rules.py      the scorer's judgement — season, occasion, and what it leaves off
+requirements.txt         pinned to major versions
+requirements-dev.txt     pytest and httpx2, needed only to run the suite
 ```
 
 `color.py` needs nothing beyond the standard library. The maths is a few dozen
@@ -186,20 +235,37 @@ lines and adding numpy to a service this size would cost more than it saves.
 
 ## Where the real work goes
 
-`rules.py#build_outfit` is the function to replace — still `random.choice`
-inside a category with a colour-pairing lookup. Everything else, the endpoint,
-the shapes, the app's call site, stays as it is when the model lands.
+Both endpoints now measure rather than guess, so the remaining work is not in
+this folder except for one endpoint that does not exist yet.
 
-⚠️ `COLOR_PAIRINGS` in `rules.py` is a hand-copy of `colorPairings` in
-`data/mockWardrobe.ts`, and the app still falls back to its own copy on a
-timeout. Once a real model lands here, a 4-second timeout will quietly produce
-*different* recommendations rather than merely slower ones. Decide then whether
-the fallback should show a message instead of silently styling worse. `/match`
-sidesteps this by taking the palette in the request instead of duplicating it.
+**Photo analysis.** `addItem` in `app/add-item.tsx` has a marked hook where
+OpenCV colour extraction and YOLO categorisation should run on an uploaded
+photo. That needs an endpoint accepting an image — multipart, not the JSON
+shape the other two use. It is the last placeholder in the project.
 
-Still in the app and not yet here:
+**Tuning, if you want it.** The weights, the shortlist size and the tolerance
+are constants at the top of `rules.py`, chosen by reasoning and then checked
+against the seed wardrobe rather than fitted to data. If you ever collect real
+preferences — even a handful of "liked this outfit" taps — those constants are
+what you would fit. That is a genuine extension, not a repair.
 
-- **Photo analysis.** `addItem` in `app/add-item.tsx` has a marked hook where
-  OpenCV colour extraction and YOLO categorisation should run on an uploaded
-  photo. That will need an endpoint that accepts an image — multipart, not the
-  JSON shape the other two use.
+**Learned compatibility.** A Polyvore-style model that learns which garments go
+together from image features is the ambitious version. It needs a labelled
+dataset and is a substantially bigger project than the scoring approach, which
+reuses the colour maths already here and can be explained in a viva without
+hand-waving.
+
+**The app's offline fallback is worse than this, and admits it.**
+`COLOR_PAIRINGS` no longer exists here — the scorer does not need a lookup
+table — but `data/mockWardrobe.ts` still has its copy, and `buildLocalOutfit()`
+in the store still runs the old sampling when this service cannot be reached.
+That was harmless while both sides ran identical rules; it is not any more. So
+`suggestOutfit()` returns `{ items, styledOffline }` and the Today screen shows
+a "Styled offline" note when the look did not come from here. If you are
+testing a change and expecting to see it, that note is the quickest way to tell
+the request never arrived.
+
+The match checker does the same and then some: with this service unreachable it
+shows the verdict but **no percentage**, because the offline number is a hash
+of the item's id rather than a measurement. If you are watching for a `/match`
+request and the sheet shows a score, it reached you.

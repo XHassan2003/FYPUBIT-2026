@@ -201,6 +201,83 @@ def score_from_distance(distance: float) -> float:
     return _SCORE_ANCHORS[-1][1]
 
 
+# --------------------------------------------------------------------------
+# Harmony between two garments
+#
+# A different question from the one above. Matching a garment to a palette is
+# "how close is this colour to that one" — distance, and less is better. Two
+# garments worn together is not that: an outfit in one flat colour is not the
+# best possible outfit, and the most distant colour is usually a clash. What
+# reads well is either closely related hues or near-opposite ones, with enough
+# lightness between the pieces to tell them apart.
+# --------------------------------------------------------------------------
+
+# Below this chroma a colour behaves as a neutral — the greys, blacks, whites,
+# creams and stones that make up most of a wardrobe and sit happily with
+# anything. Hue is meaningless down here; a "blue-ish" charcoal is still
+# charcoal.
+NEUTRAL_CHROMA = 12.0
+
+# Lightness separation at which two pieces are comfortably distinct. Beyond it
+# there is nothing more to gain — white on black is not twice as good as
+# charcoal on cream.
+CONTRAST_PLATEAU = 40.0
+
+# Hue agreement matters more than value contrast, but not overwhelmingly: an
+# all-charcoal outfit is defensible, just flat.
+HUE_WEIGHT = 0.65
+CONTRAST_WEIGHT = 0.35
+
+
+def hex_to_lch(value: str) -> tuple[float, float, float]:
+    """Lab in polar form: lightness, chroma, hue angle in degrees.
+
+    Chroma and hue are what colour harmony is actually expressed in — "how
+    saturated" and "which colour" — where a* and b* are not.
+    """
+    lightness, a, b = hex_to_lab(value)
+    return lightness, math.hypot(a, b), math.degrees(math.atan2(b, a)) % 360
+
+
+def _hue_term(hue_a: float, hue_b: float) -> float:
+    """0-1 for how well two hues sit together.
+
+    Analogous (within 30°) and complementary (beyond 150°) are the two
+    classical harmonies. The trouble is in between — far enough apart to look
+    deliberate, too close to look opposite.
+    """
+    separation = abs(hue_a - hue_b) % 360
+    if separation > 180:
+        separation = 360 - separation
+
+    if separation <= 30:
+        return 1.0
+    if separation < 60:
+        return 1.0 - 0.75 * (separation - 30) / 30
+    if separation <= 120:
+        return 0.25
+    if separation < 150:
+        return 0.25 + 0.65 * (separation - 120) / 30
+    return 0.90
+
+
+def harmony_score(hex_a: str, hex_b: str) -> float:
+    """0-100 for how well two garment colours work worn together."""
+    l_a, c_a, h_a = hex_to_lch(hex_a)
+    l_b, c_b, h_b = hex_to_lch(hex_b)
+
+    # A neutral anchors anything, so hue stops carrying information and the
+    # lightness separation decides how good the pairing is.
+    if c_a < NEUTRAL_CHROMA or c_b < NEUTRAL_CHROMA:
+        hue_term = 1.0
+    else:
+        hue_term = _hue_term(h_a, h_b)
+
+    contrast_term = min(abs(l_a - l_b) / CONTRAST_PLATEAU, 1.0)
+
+    return 100 * (HUE_WEIGHT * hue_term + CONTRAST_WEIGHT * contrast_term)
+
+
 class MatchOutcome(NamedTuple):
     is_match: bool
     score: int

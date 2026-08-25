@@ -25,14 +25,6 @@ class WardrobeItem(BaseModel):
     favorite: Optional[bool] = None
 
 
-class RecommendRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    items: list[WardrobeItem]
-    occasion: str
-    include_accessories: bool = Field(default=True, alias="includeAccessories")
-
-
 class SeasonPayload(BaseModel):
     """The season the app derived from the colour quiz.
 
@@ -48,6 +40,18 @@ class SeasonPayload(BaseModel):
     name: Optional[str] = None
     palette: list[str]
     compatible_color_names: list[str] = Field(default_factory=list, alias="compatibleColorNames")
+
+
+class RecommendRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WardrobeItem]
+    occasion: str
+    include_accessories: bool = Field(default=True, alias="includeAccessories")
+    # Optional because the user may not have taken the colour quiz yet, and
+    # because an older build of the app will not send it. `build_outfit` does
+    # not read it yet — see the note there.
+    season: Optional[SeasonPayload] = None
 
 
 class MatchRequest(BaseModel):

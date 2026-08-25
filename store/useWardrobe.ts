@@ -34,6 +34,18 @@ export interface Profile {
   };
 }
 
+export interface OutfitSuggestion {
+  items: WardrobeItem[];
+  /**
+   * True when the recommender could not be reached and the look was assembled
+   * on-device instead. The two are no longer equivalent: the service scores
+   * candidate outfits on measured colour relationships, while the local rule
+   * picks at random within a category. Worth saying out loud in the UI rather
+   * than passing off a weaker suggestion as the real one.
+   */
+  styledOffline: boolean;
+}
+
 export interface MatchResult {
   isMatch: boolean;
   score: number;
@@ -44,6 +56,13 @@ export interface MatchResult {
    */
   deltaE?: number;
   nearestColor?: string;
+  /**
+   * True when the analyser could not be reached. The number that comes back
+   * then is `pseudoScore()` — a hash of the item's id, not a measurement — so
+   * this is the difference between a result and a placeholder wearing its
+   * clothes. The UI has to say which one it is showing.
+   */
+  scoredOffline: boolean;
 }
 
 /**
@@ -62,7 +81,7 @@ interface WardrobeState {
   toggleFavorite: (id: string) => void;
   saveOutfit: (itemIds: string[], occasion: Occasion) => void;
   removeOutfit: (id: string) => void;
-  suggestOutfit: (occasion: Occasion) => Promise<WardrobeItem[]>;
+  suggestOutfit: (occasion: Occasion) => Promise<OutfitSuggestion>;
   updateProfile: (patch: Partial<Profile>) => void;
   togglePreference: (key: keyof Profile["preferences"]) => void;
   setColorSeason: (season: SeasonId) => void;
@@ -110,8 +129,34 @@ function buildLocalOutfit(items: WardrobeItem[], occasion: Occasion, includeAcce
   return [top, bottom, shoes, outerwear, accessory].filter((item): item is WardrobeItem => Boolean(item));
 }
 
-/** Ask the Python recommender for a look. Throws if it is unreachable or slow. */
-async function fetchOutfit(items: WardrobeItem[], occasion: Occasion, includeAccessories: boolean) {
+/**
+ * The season as the service wants it. Both endpoints take the same shape, and
+ * both take it in the request rather than the service holding a copy — that
+ * keeps data/colorSeasons.ts the only definition of the palettes.
+ */
+function seasonPayload(season: ColorSeason) {
+  return {
+    id: season.id,
+    name: season.name,
+    palette: season.palette,
+    compatibleColorNames: season.compatibleColorNames,
+  };
+}
+
+/**
+ * Ask the Python recommender for a look. Throws if it is unreachable or slow.
+ *
+ * `season` is sent so the recommender can prefer garments that suit the user.
+ * It is undefined until they have taken the colour quiz, and today's
+ * `build_outfit` ignores it either way — the wiring is in place ahead of the
+ * scorer that will read it.
+ */
+async function fetchOutfit(
+  items: WardrobeItem[],
+  occasion: Occasion,
+  includeAccessories: boolean,
+  season: ColorSeason | undefined
+) {
   // Undefined in a production build with no override, or behind a tunnel. Bail
   // before opening a socket rather than requesting "undefined/recommend".
   if (!API_BASE_URL) throw new Error("No recommender address configured");
@@ -125,7 +170,12 @@ async function fetchOutfit(items: WardrobeItem[], occasion: Occasion, includeAcc
     const response = await fetch(`${API_BASE_URL}/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items, occasion, includeAccessories }),
+      body: JSON.stringify({
+        items,
+        occasion,
+        includeAccessories,
+        season: season ? seasonPayload(season) : null,
+      }),
       signal: controller.signal,
     });
 
@@ -157,15 +207,7 @@ async function fetchMatch(item: WardrobeItem, season: ColorSeason): Promise<Matc
     const response = await fetch(`${API_BASE_URL}/match`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        item,
-        season: {
-          id: season.id,
-          name: season.name,
-          palette: season.palette,
-          compatibleColorNames: season.compatibleColorNames,
-        },
-      }),
+      body: JSON.stringify({ item, season: seasonPayload(season) }),
       signal: controller.signal,
     });
 
@@ -181,6 +223,7 @@ async function fetchMatch(item: WardrobeItem, season: ColorSeason): Promise<Matc
       score: data.score,
       deltaE: typeof data.deltaE === "number" ? data.deltaE : undefined,
       nearestColor: typeof data.nearestColor === "string" ? data.nearestColor : undefined,
+      scoredOffline: false,
     };
   } finally {
     clearTimeout(timeout);
@@ -193,7 +236,10 @@ async function fetchMatch(item: WardrobeItem, season: ColorSeason): Promise<Matc
  * item id, so treat the number it returns as decoration — the real one comes
  * from the service.
  */
-function localMatch(item: WardrobeItem, season: ColorSeason | undefined): MatchResult {
+function localMatch(
+  item: WardrobeItem,
+  season: ColorSeason | undefined
+): Omit<MatchResult, "scoredOffline"> {
   if (!season) return { isMatch: false, score: pseudoScore(item.id, 45, 65) };
 
   const isMatch = season.compatibleColorNames.includes(item.colorName);
@@ -250,12 +296,13 @@ export const useWardrobe = create<WardrobeState>()(
       suggestOutfit: async (occasion) => {
         const { items, profile } = get();
         const { includeAccessories } = profile.preferences;
+        const season = profile.colorSeason ? COLOR_SEASONS[profile.colorSeason] : undefined;
 
         try {
-          return await fetchOutfit(items, occasion, includeAccessories);
+          return { items: await fetchOutfit(items, occasion, includeAccessories, season), styledOffline: false };
         } catch (error) {
           console.warn("[stylist] recommender unavailable, styling on-device instead:", error);
-          return buildLocalOutfit(items, occasion, includeAccessories);
+          return { items: buildLocalOutfit(items, occasion, includeAccessories), styledOffline: true };
         }
       },
 
@@ -290,14 +337,15 @@ export const useWardrobe = create<WardrobeState>()(
         const season = profile.colorSeason ? COLOR_SEASONS[profile.colorSeason] : undefined;
 
         // No quiz result means no palette to measure against, so there is
-        // nothing for the service to do either.
-        if (!season) return localMatch(item, undefined);
+        // nothing for the service to do either. Not an offline result — the
+        // sheet gates this behind the quiz and never asks in the first place.
+        if (!season) return { ...localMatch(item, undefined), scoredOffline: false };
 
         try {
           return await fetchMatch(item, season);
         } catch (error) {
           console.warn("[stylist] matcher unavailable, scoring on-device instead:", error);
-          return localMatch(item, season);
+          return { ...localMatch(item, season), scoredOffline: true };
         }
       },
     }),

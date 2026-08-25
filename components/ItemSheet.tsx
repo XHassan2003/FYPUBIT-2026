@@ -121,27 +121,45 @@ export function ItemSheet({ item, onClose }: ItemSheetProps) {
                           {result.isMatch ? "This one is yours." : "Wear it with intent."}
                         </Text>
                       </View>
-                      <Text style={styles.score}>
-                        {result.score}
-                        <Text style={styles.percent}>%</Text>
-                      </Text>
+                      {/* No number offline. The verdict still comes from the
+                          season's own colour list, but the percentage there is
+                          a hash of the item's id, and a fabricated figure looks
+                          more authoritative than the real one. */}
+                      {result.scoredOffline ? null : (
+                        <Text style={styles.score}>
+                          {result.score}
+                          <Text style={styles.percent}>%</Text>
+                        </Text>
+                      )}
                     </View>
 
-                    <View style={styles.barTrack}>
-                      <Animated.View
-                        style={[
-                          styles.barFill,
-                          { backgroundColor: result.isMatch ? colors.forest : colors.ember },
-                          barStyle,
-                        ]}
-                      />
-                    </View>
+                    {result.scoredOffline ? null : (
+                      <View style={styles.barTrack}>
+                        <Animated.View
+                          style={[
+                            styles.barFill,
+                            { backgroundColor: result.isMatch ? colors.forest : colors.ember },
+                            barStyle,
+                          ]}
+                        />
+                      </View>
+                    )}
 
                     <Text style={[type.small, styles.resultNote]}>
                       {result.isMatch
                         ? `${item.colorName} sits inside your season's compatible range.`
                         : `${item.colorName} falls outside your season — pair it away from the face.`}
                     </Text>
+
+                    {result.scoredOffline ? (
+                      <View style={styles.offlineNote}>
+                        <Ionicons name="cloud-offline-outline" size={13} color={colors.smoke} />
+                        <Text style={[type.small, styles.offlineNoteLabel]}>
+                          Checked offline. The analyser could not be reached, so this is your
+                          season&apos;s colour list rather than a measurement.
+                        </Text>
+                      </View>
+                    ) : null}
                   </Animated.View>
                 ) : (
                   <View style={styles.cta}>
@@ -228,6 +246,18 @@ const styles = StyleSheet.create({
   barTrack: { height: 3, backgroundColor: inkAlpha.a8, marginTop: spacing.lg },
   barFill: { height: "100%" },
   resultNote: { marginTop: spacing.lg },
+  // Matches the "Styled offline" note on Today: sand, not ember. A result that
+  // arrived by the slower route is a caveat, not a failure.
+  offlineNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.sand,
+  },
+  offlineNoteLabel: { flex: 1 },
 
   removeRow: { marginTop: spacing.xl },
   removeTrigger: { flexDirection: "row", alignItems: "center", gap: spacing.sm },

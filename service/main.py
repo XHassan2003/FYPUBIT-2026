@@ -48,6 +48,7 @@ def recommend(request: RecommendRequest) -> list[WardrobeItem]:
         items=request.items,
         occasion=request.occasion,
         include_accessories=request.include_accessories,
+        season=request.season,
     )
 
 

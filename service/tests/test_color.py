@@ -14,6 +14,7 @@ import pytest
 from color import (
     MATCH_THRESHOLD,
     ciede2000,
+    harmony_score,
     hex_to_lab,
     hex_to_rgb,
     nearest_palette_color,
@@ -164,3 +165,60 @@ def test_clashing_garment_scores_below_the_threshold():
 def test_empty_palette_is_an_error_not_a_score():
     with pytest.raises(ValueError):
         score_item_against_season("#FFFFFF", "white", [], [])
+
+
+# --- harmony between two garments -----------------------------------------
+#
+# A different question from palette matching, and it must not collapse into
+# "closer is better": an outfit in one flat colour is not the best possible
+# outfit, and the most distant colour is usually a clash.
+
+WHITE, BLACK, CHARCOAL = "#FFFFFF", "#1C1B19", "#3A3A3A"
+RED, ORANGE, GREEN, BLUE = "#C0392B", "#D35400", "#27AE60", "#2C6FBB"
+
+
+def test_harmony_is_symmetric():
+    for a, b in [(WHITE, BLACK), (RED, GREEN), (ORANGE, BLUE)]:
+        assert harmony_score(a, b) == pytest.approx(harmony_score(b, a))
+
+
+def test_harmony_stays_in_range():
+    for a in [WHITE, BLACK, RED, ORANGE, GREEN, BLUE, CHARCOAL]:
+        for b in [WHITE, BLACK, RED, ORANGE, GREEN, BLUE, CHARCOAL]:
+            assert 0 <= harmony_score(a, b) <= 100
+
+
+def test_neutrals_with_contrast_are_the_easy_win():
+    assert harmony_score(WHITE, BLACK) == pytest.approx(100)
+
+
+def test_one_flat_colour_is_allowed_but_dull():
+    """All-charcoal should score respectably and still lose to some contrast."""
+    flat = harmony_score(CHARCOAL, CHARCOAL)
+    contrasted = harmony_score(CHARCOAL, WHITE)
+
+    assert 50 < flat < contrasted
+
+
+def test_neutrals_go_with_any_hue():
+    """Whatever the colour, a neutral partner should not be penalised on hue."""
+    for color in [RED, ORANGE, GREEN, BLUE]:
+        assert harmony_score(color, BLACK) > 75
+
+
+def test_analogous_hues_beat_the_clash_zone():
+    analogous = harmony_score(RED, ORANGE)
+    awkward = harmony_score(RED, GREEN)
+    assert analogous > awkward
+
+
+def test_near_opposites_beat_the_clash_zone():
+    """Complementary pairs are a classical harmony; the middle is the problem."""
+    assert harmony_score(ORANGE, BLUE) > harmony_score(RED, GREEN)
+
+
+def test_identical_saturated_colours_are_not_the_top_score():
+    """Two of the same strong colour is coherent but flat — it must not beat a
+    well-contrasted pairing, or the scorer would dress people head to toe in
+    one hue."""
+    assert harmony_score(RED, RED) < harmony_score(WHITE, BLACK)

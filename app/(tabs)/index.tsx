@@ -81,6 +81,7 @@ export default function TodayScreen() {
   const [occasion, setOccasion] = useState<Occasion | null>(null);
   const [look, setLook] = useState<WardrobeItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [styledOffline, setStyledOffline] = useState(false);
 
   const heroScale = useSharedValue(1.08);
   useEffect(() => {
@@ -103,7 +104,8 @@ export default function TodayScreen() {
     setOccasion(next);
     setLoading(true);
     const result = await suggestOutfit(next);
-    setLook(result);
+    setLook(result.items);
+    setStyledOffline(result.styledOffline);
     setLoading(false);
   };
 
@@ -153,6 +155,16 @@ export default function TodayScreen() {
           onAction={() => occasion && handleSuggest(occasion)}
         />
       </View>
+
+      {styledOffline && !loading && look.length > 0 ? (
+        <Animated.View entering={FadeIn.duration(300)} style={styles.offlineNote}>
+          <Ionicons name="cloud-offline-outline" size={14} color={colors.smoke} />
+          <Text style={[type.small, styles.offlineNoteLabel]}>
+            Styled offline. The recommender could not be reached, so this look came from the
+            simpler rules on your phone.
+          </Text>
+        </Animated.View>
+      ) : null}
 
       <View style={styles.lookArea}>
         {loading ? (
@@ -272,6 +284,20 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: gutter, paddingBottom: spacing.xs },
 
   lookHeader: { marginTop: spacing.xxl + spacing.sm },
+  // Sand rather than the ember used for errors: a fallback look is a weaker
+  // suggestion, not a failure, and it should read as a footnote to the rail
+  // below rather than an alarm above it.
+  offlineNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    marginHorizontal: gutter,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.sand,
+  },
+  offlineNoteLabel: { flex: 1 },
   lookArea: { marginTop: spacing.xl, minHeight: 268 },
   skeletonRow: { flexDirection: "row", gap: spacing.md },
   skeleton: { height: 236, width: 152, backgroundColor: colors.sand },
