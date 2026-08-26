@@ -57,6 +57,10 @@ function RootNavigator() {
             presentation and nothing else. */}
         <Stack.Screen name="add-item" options={{ presentation: "modal" }} />
         <Stack.Screen name="color-quiz" options={{ presentation: "modal" }} />
+        {/* Full screen rather than a modal card: the result is meant to fill
+            the display, and a sheet with the wardrobe showing behind it would
+            undercut that. */}
+        <Stack.Screen name="try-on" options={{ presentation: "fullScreenModal" }} />
       </Stack.Protected>
 
       <Stack.Protected guard={!isSignedIn}>

@@ -24,6 +24,49 @@ To run the tests as well, add the dev dependencies:
 pip install -r requirements-dev.txt
 ```
 
+### The Gemini key
+
+`POST /analyse` needs one. Everything else works without it.
+
+```bash
+cp .env.example .env
+```
+
+Then paste a key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+into `GEMINI_API_KEY`.
+
+This key is a **secret**, unlike the app's Clerk publishable key. That is why
+the Gemini call lives here rather than in the app: anything named
+`EXPO_PUBLIC_*` is inlined into the bundle at build time and can be read out of
+a shipped app, and this one is billable. `service/.env` is gitignored.
+
+Without a key, `/analyse` returns **503** rather than 500 — it is a setup
+problem, not a failure, and the app says "not set up yet" instead of asking the
+user to try again.
+
+⚠️ **The free tier's quota is small enough to hit while demoing.** Analysing a
+handful of photos in quick succession earns a `429`, which `/analyse` passes
+through as `429` so the app can say "wait a moment" rather than blaming the
+photo. Two things make this confusing if you do not know to expect it:
+
+- The SDK retries internally with backoff before surfacing the error, so a
+  rate-limited call can take **60-90 seconds to fail** rather than failing at
+  once. A healthy call takes about **6 seconds**.
+- Once the quota is gone, every call fails fast with 429 until it resets.
+
+If analysis is suddenly slow and then fails, check the quota before suspecting
+the photo or the code.
+
+**A trap if you ever touch the error handling.** The Interactions API raises
+from `google.genai._gaos.lib.compat_errors`, and those exceptions do **not**
+inherit from `google.genai.errors.APIError` — there are two unrelated classes
+of that name, so `isinstance` against the one you would naturally import is
+simply `False`. They also carry the status on `status_code`, where the older
+hierarchy uses `code`. Getting either wrong sends every quota error through as
+a generic failure, and the app then tells the user their photograph is the
+problem. `_raise_for` in `vision.py` reads both attributes and matches on
+neither class; `test_vision.py` pins the behaviour with fakes for both shapes.
+
 ## Run
 
 From the project root, once the environment above exists:
@@ -76,6 +119,88 @@ common culprit), or you forgot `--host 0.0.0.0`.
 `season` is optional — the user may not have taken the colour quiz, and an
 older build of the app will not send it. When it is absent the season term
 abstains and the outfit is chosen on harmony and occasion alone.
+
+`POST /analyse` — reads a garment from a photograph:
+
+```json
+{
+  "image": "<base64, no data: prefix>",
+  "mimeType": "image/jpeg",
+  "categories": ["tops", "bottoms", "outerwear", "shoes", "accessories"],
+  "occasions": ["work", "casual", "date night", "workout", "formal"],
+  "swatches": [{ "hex": "#B08968", "name": "camel" }]
+}
+```
+
+```json
+{
+  "name": "Wool Overcoat", "brand": "Hartley Row", "category": "outerwear",
+  "occasions": ["work", "formal"],
+  "color": "#B08968", "colorName": "camel",
+  "detectedColor": "#AD8564", "deltaE": 3.4
+}
+```
+
+**Every field is optional.** A model that cannot tell what colour something is
+should leave the picker alone rather than guess — an empty field costs one tap,
+a confidently wrong one costs trust. The app only fills in fields the user has
+not already answered.
+
+`POST /try-on` — generates the wearer in their chosen outfit:
+
+```json
+{
+  "person": "<base64>",
+  "personMimeType": "image/jpeg",
+  "garments": [
+    { "image": "<base64>", "mimeType": "image/jpeg", "name": "Wool Overcoat", "category": "outerwear" }
+  ]
+}
+```
+
+```json
+{ "image": "<base64 jpeg>", "mimeType": "image/jpeg" }
+```
+
+Up to **six garments** (`MAX_GARMENTS`), refused before anything is spent —
+past that the model starts dropping pieces rather than layering them, and
+finding that out costs a generation.
+
+Each reference is labelled with its category and name before it is sent, so the
+model knows which image is the coat and which is the shoes. Handing it a pile
+of unnamed images layers them worse.
+
+The model can also **decline** and answer in text instead — a photo it will not
+dress, a safety refusal. That is a 502 whose message says what to change about
+the photograph, and the app shows it verbatim rather than replacing it with
+something generic.
+
+⚠️ **This is the expensive endpoint.** It generates a photograph rather than
+reading one, and the free tier's quota disappears quickly. The app allows it
+120 seconds (`TRY_ON_TIMEOUT_MS`) against roughly 25 for analysis.
+
+### How the photo is read
+
+`vision.py`, and the split is the point:
+
+- **Gemini** answers what only a model can — what garment is this, what would
+  you call it, when would you wear it, and what colour is it *actually*. It is
+  asked for a free `#RRGGBB` hex, never for a colour name.
+- **`color.py`** then decides which of the app's swatches that hex is, by
+  CIEDE2000 distance. The one part of the answer that has to line up with the
+  rest of the wardrobe is therefore deterministic, explainable, and not left to
+  a model's choice of adjective. `detectedColor` and `deltaE` come back too, so
+  "camel" is checkable against what was actually seen.
+
+Categories and occasions are **enums in the response schema**, so the model
+cannot invent a sixth category the app has no screen for. Generation is
+constrained; the answer is then checked again in `_to_garment` anyway, because
+a schema constrains but does not guarantee, and this is the boundary where a
+wrong value would become a wardrobe item.
+
+The app resizes to 1024px before sending. Gemini bills images in 768px tiles,
+so a 4000px phone photo costs more, uploads slower, and says nothing extra
+about what a garment is.
 
 ### How the outfit is chosen
 
@@ -217,7 +342,9 @@ no log line means the app never reached you.
 ## What is where
 
 ```
-main.py                  FastAPI app, CORS, the three endpoints
+main.py                  FastAPI app, CORS, the five endpoints
+vision.py                garment photo analysis — Gemini, then our own colour snapping
+tryon.py                 virtual try-on by image generation
 models.py                request/response shapes; camelCase aliases for the RN client
 rules.py                 outfit assembly — shortlist, score, choose
 color.py                 Lab conversion, CIEDE2000, palette scoring, garment harmony
@@ -226,6 +353,8 @@ tests/test_color.py      the colour maths, against published reference data
 tests/test_match.py      the /match endpoint, over the real request shapes
 tests/test_recommend.py  the /recommend contract — shapes and ordering
 tests/test_rules.py      the scorer's judgement — season, occasion, and what it leaves off
+tests/test_vision.py     the checking around Gemini — no test here calls it
+tests/test_tryon.py      the guards around generation — no test here calls it either
 requirements.txt         pinned to major versions
 requirements-dev.txt     pytest and httpx2, needed only to run the suite
 ```
@@ -235,13 +364,23 @@ lines and adding numpy to a service this size would cost more than it saves.
 
 ## Where the real work goes
 
-Both endpoints now measure rather than guess, so the remaining work is not in
-this folder except for one endpoint that does not exist yet.
+**Photo analysis is Gemini for now, by choice.** `/analyse` is a stand-in for
+the OpenCV colour extraction and YOLO categorisation the project intends: it
+proves the round-trip, the request and response shapes, and the app wiring,
+so swapping the model later is a change to `vision.py` alone. When OpenCV and
+YOLO land they replace `analyse_garment`; nothing else moves.
 
-**Photo analysis.** `addItem` in `app/add-item.tsx` has a marked hook where
-OpenCV colour extraction and YOLO categorisation should run on an uploaded
-photo. That needs an endpoint accepting an image — multipart, not the JSON
-shape the other two use. It is the last placeholder in the project.
+**Virtual try-on is Gemini for now too**, and the honest description matters
+here more than anywhere else in the project. A purpose-built try-on model warps
+a specific garment onto a specific body and keeps both intact. `/try-on` asks a
+general image model to compose a new photograph from references, which is a
+different job with a different failure mode: the result usually looks
+*plausible* rather than *accurate*, and faces drift. Enough to demonstrate the
+idea; not enough to judge whether a coat fits. Say that out loud rather than
+letting it be heard as a fitting room.
+
+Swapping in a real try-on model replaces `generate_try_on` — the endpoint, the
+request shape and the whole app flow stay as they are.
 
 **Tuning, if you want it.** The weights, the shortlist size and the tolerance
 are constants at the top of `rules.py`, chosen by reasoning and then checked

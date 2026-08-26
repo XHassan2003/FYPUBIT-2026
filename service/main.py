@@ -8,12 +8,30 @@ swapping the app over is a one-function change.
 Run it:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 """
 
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from color import score_item_against_season
-from models import MatchRequest, MatchResponse, RecommendRequest, WardrobeItem
+from models import (
+    AnalyseRequest,
+    AnalyseResponse,
+    MatchRequest,
+    MatchResponse,
+    RecommendRequest,
+    TryOnRequest,
+    TryOnResponse,
+    WardrobeItem,
+)
 from rules import build_outfit
+from tryon import generate_try_on
+from vision import VisionFailed, VisionRateLimited, VisionUnavailable, analyse_garment
+
+# Before anything reads GEMINI_API_KEY. The path is explicit because npm runs
+# the service from the project root, so the working directory is not this one.
+load_dotenv(Path(__file__).parent / ".env")
 
 app = FastAPI(
     title="AI Personal Stylist",
@@ -77,3 +95,67 @@ def match(request: MatchRequest) -> MatchResponse:
         deltaE=outcome.delta_e,
         nearestColor=outcome.nearest_color,
     )
+
+
+@app.post("/analyse", response_model=AnalyseResponse)
+def analyse(request: AnalyseRequest) -> AnalyseResponse:
+    """Read a garment from a photo so Add Piece can fill itself in.
+
+    Gemini identifies the garment and its true colour; `color.py` decides which
+    of the app's swatches that colour is. Fields the model could not determine
+    come back null, and the form leaves them for the user.
+    """
+    try:
+        garment = analyse_garment(
+            image_base64=request.image,
+            mime_type=request.mime_type,
+            categories=request.categories,
+            occasions=request.occasions,
+            swatches=[swatch.model_dump() for swatch in request.swatches],
+        )
+    except VisionUnavailable as err:
+        # Missing configuration, not a failed request — 503 so the app can say
+        # "not set up" rather than "try again".
+        raise HTTPException(status_code=503, detail=str(err)) from err
+    except VisionRateLimited as err:
+        # Passed straight through as 429. The photo and the request were both
+        # fine, and the same request will work later — telling someone to try a
+        # different photo would send them fixing the wrong thing.
+        raise HTTPException(status_code=429, detail=str(err)) from err
+    except VisionFailed as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+
+    return AnalyseResponse(
+        name=garment["name"],
+        brand=garment["brand"],
+        category=garment["category"],
+        occasions=garment["occasions"],
+        color=garment["color"],
+        colorName=garment["colorName"],
+        detectedColor=garment["detectedColor"],
+        deltaE=garment["deltaE"],
+    )
+
+
+@app.post("/try-on", response_model=TryOnResponse)
+def try_on(request: TryOnRequest) -> TryOnResponse:
+    """Compose the wearer into their chosen outfit.
+
+    Slower and dearer than the other endpoints — it generates a photograph
+    rather than reading one — so the app gives it a much longer budget and says
+    what it is doing while it waits.
+    """
+    try:
+        result = generate_try_on(
+            person_base64=request.person,
+            person_mime_type=request.person_mime_type,
+            garments=[garment.model_dump(by_alias=True) for garment in request.garments],
+        )
+    except VisionUnavailable as err:
+        raise HTTPException(status_code=503, detail=str(err)) from err
+    except VisionRateLimited as err:
+        raise HTTPException(status_code=429, detail=str(err)) from err
+    except VisionFailed as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+
+    return TryOnResponse(image=result["image"], mimeType=result["mimeType"])

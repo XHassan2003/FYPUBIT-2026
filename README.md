@@ -1,8 +1,8 @@
 # AI Personal Stylist — frontend
 
-Six working screens (Today, Wardrobe, Outfit Builder, Profile, Add Piece, Colour
-Quiz) all reading from one shared store, behind Clerk sign-in with email or
-Google. There is still no backend and no database — the wardrobe lives on the
+Seven working screens (Home, Style, Wardrobe, Looks, Profile, Add Piece, Colour
+Quiz) plus the virtual try-on flow, all reading from one shared store, behind
+Clerk sign-in with email or Google. There is still no backend and no database — the wardrobe lives on the
 device. That is deliberate; this is the demo layer, and the AI service plugs in
 later at two functions.
 
@@ -150,10 +150,12 @@ pytest
 app/_layout.tsx          fonts, storage, Clerk, and the signed-in/signed-out route split
 app/(auth)/              sign-in and sign-up, reachable only while signed out
 app/sso-callback.tsx     the Google redirect's landing route — outside both guards
-app/(tabs)/_layout.tsx   custom tab bar with the sliding hairline indicator
-app/(tabs)/index.tsx     Today    — hero, occasion chips, look rail, Colour DNA, stats
+app/try-on.tsx           Virtual try-on — the five steps, in order
+app/(tabs)/_layout.tsx   tab bar — four tabs around the raised try-on button
+app/(tabs)/index.tsx     Home     — try-on landing: hero, the two steps, piece rail, last look
+app/(tabs)/style.tsx     Style    — hero, occasion chips, look rail, Colour DNA, stats
 app/(tabs)/wardrobe.tsx  Wardrobe — filters, 2-col masonry, add button, long-press delete
-app/(tabs)/builder.tsx   Builder  — three rails, live preview, Surprise me, Save look
+app/(tabs)/builder.tsx   Looks    — three rails, live preview, Surprise me, Save look
 app/(tabs)/profile.tsx   Profile  — avatar, Colour DNA, tags, measurements, toggles
 app/add-item.tsx         Add Piece modal  — photo picker, category, colour, occasions
 app/color-quiz.tsx       Colour Quiz modal — four questions, seasonal palette result
@@ -164,10 +166,14 @@ constants/auth.ts        the Clerk key, and Clerk errors turned into readable te
 data/mockWardrobe.ts     20 seed items + the placeholder colour-pairing rules
 data/colorSeasons.ts     four seasonal palettes, the quiz questions, computeSeason()
 store/useWardrobe.ts     zustand + persist — items, outfits, profile, suggestOutfit(), matchItemToProfile()
-hooks/useDisplayName.ts  Clerk's name for the Today greeting and the Profile heading
+store/useTryOn.ts        the try-on in progress — shared by Home and the flow, not persisted
+hooks/useDisplayName.ts  Clerk's name for the Style greeting and the Profile heading
+hooks/useGarmentAnalysis.ts  pick, resize and read a garment photo
 
 components/AuthLayout.tsx       the auth shell, field, submit, divider and notice slab
 components/GoogleButton.tsx     the Google mark, and the SSO call behind it
+components/PhotoAnalysis.tsx    what the analyser read off the photo, and that it is editable
+components/TryOnSteps.tsx       the try-on's four visible steps, kept together like AuthLayout
 components/Screen.tsx           screen shell: safe area, scroll, sticky headers, entry fade
 components/Sheet.tsx            bottom sheet with drag-to-dismiss
 components/ItemSheet.tsx        garment detail + colour match checker, built on Sheet
@@ -180,7 +186,7 @@ components/SectionHeader.tsx    eyebrow + hairline rule + optional action
 components/EmptyState.tsx       image, headline, message, action
 components/Toggle.tsx           square switch for preferences
 
-assets/images/editorial/  five photographs used by Today, Wardrobe, Builder,
+assets/images/editorial/  six photographs used by Home, Style, Wardrobe, Looks,
                           Profile and the quiz result
 
 service/                 the Python service — /recommend, /match, and the colour maths
@@ -194,9 +200,9 @@ parallel without stepping on each other:
 
 | Person | Owns | Files |
 | --- | --- | --- |
-| A | Today | `app/(tabs)/index.tsx` |
+| A | Style + Home | `app/(tabs)/style.tsx`, `app/(tabs)/index.tsx` |
 | B | Wardrobe + Add Piece | `app/(tabs)/wardrobe.tsx`, `app/add-item.tsx` |
-| C | Outfit Builder | `app/(tabs)/builder.tsx` |
+| C | Looks + Virtual try-on | `app/(tabs)/builder.tsx`, `app/try-on.tsx`, `components/TryOnSteps.tsx` |
 | D | Profile, Colour Quiz + shared components | `app/(tabs)/profile.tsx`, `app/color-quiz.tsx`, `components/`, `constants/` |
 
 One rule: nobody edits `constants/theme.ts` or `store/useWardrobe.ts` on a feature
@@ -217,6 +223,11 @@ branch without telling the group. Those two files are the shared contract.
   the bottom of `constants/theme.ts` so the rest of the app cannot drift into
   them by accident. Nothing outside `app/(auth)`, `components/AuthLayout.tsx`
   and `components/GoogleButton.tsx` should import from that block.
+- **Heroes are one file each**, named for the screen they serve. Swapping one is
+  a file replacement, not a code change. What the slot on Home wants, if it is
+  ever changed again: portrait, a person full length, room at the top for the
+  wordmark. The ink gradient covers the lower 78%, so anything below the waist
+  reads as texture behind the headline rather than as subject.
 - **Signature** — the flat garment silhouettes. They mean the app looks like a
   stylist app with zero photo assets, and they degrade gracefully: the moment an
   item has a real `image`, `GarmentThumb` renders the photo instead.
@@ -288,25 +299,65 @@ What that replaced is worth knowing, because the fallback still does it: the old
 score was `pseudoScore()`, a hash of the item's id scaled into a flattering
 range. Stable per garment, and entirely meaningless.
 
-One integration point is still a placeholder:
+**Photo analysis is wired too**, through Gemini rather than the OpenCV and YOLO
+the project eventually wants. Pick a photo in Add Piece and the form fills
+itself in: name, brand, category, occasions and colour. Gemini identifies the
+garment and its true colour; `service/color.py` decides which of the app's
+swatches that colour is, so the one part of the answer that has to match the
+rest of the wardrobe is measured rather than named by a model.
 
-- `addItem` is where the OpenCV colour-extraction and YOLO categorisation call
-  goes once a photo comes in. The hook is marked with a comment in
-  `app/add-item.tsx`.
+It needs a Gemini API key in `service/.env` — see
+[service/README.md](service/README.md). The key stays on the service for a
+reason: anything `EXPO_PUBLIC_*` is inlined into the app bundle, and this one is
+billable.
+
+Three rules it follows, all worth keeping if the model behind it changes:
+
+- **It only fills fields the user has not answered.** A suggestion never
+  overwrites a deliberate choice.
+- **It leaves out what it could not determine.** Every field is optional; an
+  empty picker costs one tap, a confidently wrong one costs trust.
+- **There is no fallback.** Nothing on the device can read a photograph, so a
+  failure is reported and the form is filled in by hand, exactly as before.
+
+Swapping in OpenCV and YOLO later is a change to `service/vision.py` alone —
+the endpoint, the shapes and the app wiring stay as they are.
+
+**Virtual try-on is built too**, also on Gemini for now. "Try it on" in the
+Builder opens a five-step flow: your photograph, the pieces you want to see,
+a last look at both, the wait, and the result. `app/try-on.tsx` holds the order
+things happen in, `components/TryOnSteps.tsx` the drawing, `hooks/useTryOn.ts`
+the work — picking, resizing, encoding every garment, and writing the result to
+a file so it can be shared and saved against the look.
+
+Only pieces **with a photograph** can be tried on, and only six at a time. The
+generator works from images: a silhouette tells it nothing about the garment.
+
+Be careful how this one is described. A purpose-built try-on model warps a
+specific garment onto a specific body; this asks a general image model to
+compose a new photograph from references. The result usually looks *plausible*
+rather than *accurate*, and faces drift. It demonstrates the idea — it is not a
+fitting room, and saying so first is much better than being caught out.
 
 ## Status
 
 Done:
 
-- All six screens, wired to the shared store
+- All seven screens plus the try-on flow, wired to the shared store
+- Virtual try-on moved to the centre of the app: Home is the landing, and the
+  tab bar's raised button opens it from anywhere
 - The colour analysis feature — quiz, seasonal palettes, per-item match checker
-- Full design system and thirteen shared components
+- Full design system and fifteen shared components
 - Email and Google sign-in, both verified on a device
 - Real colour matching — CIEDE2000 in CIE Lab, served from `/match`, and checked
   end-to-end from a device: the same garment scores differently against two
   seasons, which the old hashed score could not do
 - Outfit selection by scoring rather than sampling — harmony, season and
   occasion, served from `/recommend`
+- Garment photo analysis through Gemini, checked against real photographs: a
+  cream wool coat shot against a cream wall came back "Wool Overcoat",
+  outerwear, cream, with the detected colour 1.6 from the swatch it was
+  snapped to
 - Both offline fallbacks say so on screen, checked on a device with the service
   stopped: Today shows "Styled offline", and the match checker drops the
   percentage entirely rather than showing a hashed one
@@ -336,7 +387,9 @@ development, uninstall the app or call `useWardrobe.persist.clearStorage()`.
 
 - Accounts exist, but nothing is stored against them. The wardrobe is still
   per-device — that needs a backend and a database.
-- No virtual try-on yet.
+- Virtual try-on composes a new photograph rather than fitting a garment to a
+  body. Plausible, not accurate — and **not yet run end to end**, because the
+  Gemini quota ran out before it could be.
 - Outfit selection is a scoring function, not a learned model. It measures real
   colour relationships, but the weights behind it were reasoned about and
   sanity-checked against the seed wardrobe, not fitted to anyone's preferences.

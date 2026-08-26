@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# Holds GEMINI_API_KEY. Secret and billable — never commit it.
+.env

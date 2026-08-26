@@ -61,6 +61,82 @@ class MatchRequest(BaseModel):
     season: SeasonPayload
 
 
+class Swatch(BaseModel):
+    hex: str
+    name: str
+
+
+class AnalyseRequest(BaseModel):
+    """A photo, plus the vocabulary the app can actually accept back.
+
+    Categories, occasions and swatches travel with the request for the same
+    reason the seasonal palettes do: the app owns them, and a second copy here
+    would be one more pair of files to keep in step.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    image: str = Field(description="Base64-encoded image bytes, no data: prefix")
+    mime_type: str = Field(default="image/jpeg", alias="mimeType")
+    categories: list[str]
+    occasions: list[str]
+    swatches: list[Swatch]
+
+
+class AnalyseResponse(BaseModel):
+    """What Add Piece needs to fill itself in.
+
+    Every field is optional. A model that cannot tell what colour something is
+    should leave the picker alone, not guess — an empty field costs one tap,
+    a wrong one costs trust.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    occasions: list[str] = Field(default_factory=list)
+    # The swatch the app should select, after snapping.
+    color: Optional[str] = None
+    color_name: Optional[str] = Field(default=None, alias="colorName")
+    # What Gemini actually saw, and how far that was from the chosen swatch.
+    # Same reasoning as /match: the workings make the answer checkable.
+    detected_color: Optional[str] = Field(default=None, alias="detectedColor")
+    delta_e: Optional[float] = Field(default=None, alias="deltaE")
+
+
+class GarmentImage(BaseModel):
+    """One piece of the outfit, as a picture plus what it is.
+
+    The label matters: telling the model which reference is the coat and which
+    is the shoes produces a better-layered result than handing it a pile of
+    unnamed images.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    image: str = Field(description="Base64-encoded image bytes")
+    mime_type: str = Field(default="image/jpeg", alias="mimeType")
+    name: Optional[str] = None
+    category: Optional[str] = None
+
+
+class TryOnRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    person: str = Field(description="Base64-encoded photo of the wearer")
+    person_mime_type: str = Field(default="image/jpeg", alias="personMimeType")
+    garments: list[GarmentImage]
+
+
+class TryOnResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    image: str = Field(description="Base64-encoded generated image")
+    mime_type: str = Field(default="image/jpeg", alias="mimeType")
+
+
 class MatchResponse(BaseModel):
     """What the app's `MatchResult` needs, plus the workings behind it."""
 

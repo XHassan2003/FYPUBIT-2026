@@ -7,27 +7,18 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-
 import { Button } from "@/components/Button";
 import { Chip } from "@/components/Chip";
 import { GarmentSilhouette } from "@/components/GarmentSilhouette";
+import { PhotoAnalysis } from "@/components/PhotoAnalysis";
 import { Screen } from "@/components/Screen";
 import { SectionHeader } from "@/components/SectionHeader";
 import { colors, fonts, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
 import { CATEGORIES, Category, OCCASIONS, Occasion } from "@/data/mockWardrobe";
-import { useWardrobe } from "@/store/useWardrobe";
-
-const SWATCHES: { hex: string; name: string }[] = [
-  { hex: "#FFFFFF", name: "white" },
-  { hex: "#F1E9DA", name: "cream" },
-  { hex: "#D8D2C4", name: "stone" },
-  { hex: "#8A9A80", name: "sage" },
-  { hex: "#6B6E4E", name: "olive" },
-  { hex: "#B08968", name: "camel" },
-  { hex: "#A9784F", name: "tan" },
-  { hex: "#3B4A6B", name: "indigo" },
-  { hex: "#3A3A3A", name: "charcoal" },
-  { hex: "#1C1B19", name: "black" },
-];
+import { SWATCHES } from "@/data/swatches";
+import { useGarmentAnalysis } from "@/hooks/useGarmentAnalysis";
+import { GarmentAnalysis, useWardrobe } from "@/store/useWardrobe";
 
 export default function AddItemScreen() {
   const addItem = useWardrobe((state) => state.addItem);
+  const { analyse, analysing, error: analysisError, clearError } = useGarmentAnalysis();
 
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
@@ -35,21 +26,56 @@ export default function AddItemScreen() {
   const [swatch, setSwatch] = useState(SWATCHES[0]);
   const [occasions, setOccasions] = useState<Occasion[]>([]);
   const [image, setImage] = useState<string | undefined>();
+  const [analysis, setAnalysis] = useState<GarmentAnalysis | null>(null);
 
   const canSubmit = name.trim().length > 0 && occasions.length > 0;
 
   const toggleOccasion = (occasion: Occasion) =>
     setOccasions((prev) => (prev.includes(occasion) ? prev.filter((item) => item !== occasion) : [...prev, occasion]));
 
+  /**
+   * Everything the analyser returns is a suggestion, and only ever fills a
+   * field the user has not already answered. Overwriting a deliberate choice
+   * with a guess is the one thing this must not do.
+   */
+  const applyAnalysis = (found: GarmentAnalysis) => {
+    if (found.name && !name.trim()) setName(found.name);
+    if (found.brand && !brand.trim()) setBrand(found.brand);
+    if (found.category) setCategory(found.category);
+    if (found.occasions.length > 0 && occasions.length === 0) setOccasions(found.occasions);
+
+    // The service already snapped the detected colour to one of SWATCHES, so
+    // this is a lookup rather than a match.
+    if (found.color) {
+      const matched = SWATCHES.find((option) => option.hex === found.color);
+      if (matched) setSwatch(matched);
+    }
+  };
+
+  const runAnalysis = async (uri: string) => {
+    setAnalysis(null);
+    const found = await analyse(uri);
+    if (!found) return;
+    setAnalysis(found);
+    applyAnalysis(found);
+  };
+
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return;
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
-    if (!result.canceled) {
-      setImage(result.assets[0].uri);
-      // This is where OpenCV colour-extraction + YOLO categorisation would run
-      // once a real photo comes in — see README "Where the real AI plugs in".
-    }
+    if (result.canceled) return;
+
+    const uri = result.assets[0].uri;
+    setImage(uri);
+    clearError();
+    await runAnalysis(uri);
+  };
+
+  const removePhoto = () => {
+    setImage(undefined);
+    setAnalysis(null);
+    clearError();
   };
 
   const submit = () => {
@@ -99,11 +125,18 @@ export default function AddItemScreen() {
           )}
         </Pressable>
         {image ? (
-          <Pressable onPress={() => setImage(undefined)} style={styles.removePhoto}>
+          <Pressable onPress={removePhoto} style={styles.removePhoto}>
             <Text style={[type.caps, styles.ash]}>Remove photo</Text>
           </Pressable>
         ) : null}
       </View>
+
+      <PhotoAnalysis
+        analysing={analysing}
+        error={analysisError}
+        result={analysis}
+        onRetry={image ? () => runAnalysis(image) : undefined}
+      />
 
       <View style={styles.fields}>
         <View>

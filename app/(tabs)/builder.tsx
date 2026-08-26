@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
@@ -30,6 +31,8 @@ export default function BuilderScreen() {
     () => RAILS.map(({ category }) => selection[category]).filter((item): item is WardrobeItem => Boolean(item)),
     [selection]
   );
+
+  const wearable = useMemo(() => chosen.filter((item) => item.image), [chosen]);
 
   const pick = (item: WardrobeItem) =>
     setSelection((prev) => ({
@@ -105,6 +108,29 @@ export default function BuilderScreen() {
           <View style={styles.action}>
             <Button label="Save look" onPress={save} disabled={chosen.length === 0} />
           </View>
+        </View>
+
+        {/* The try-on takes one piece, so the first of the look that has a
+            photograph goes through as the starting selection — it can be
+            changed on the way. A silhouette tells the generator nothing. */}
+        <View style={styles.tryOn}>
+          <Button
+            label="Try it on"
+            variant="secondary"
+            disabled={wearable.length === 0}
+            onPress={() =>
+              router.push({
+                pathname: "/try-on",
+                params: { item: wearable[0]?.id },
+              })
+            }
+            icon={<Ionicons name="sparkles-outline" size={14} color={colors.ink} />}
+          />
+          {chosen.length > 0 && wearable.length === 0 ? (
+            <Text style={[type.small, styles.tryOnNote]}>
+              None of these pieces have a photo yet — add one and you can see it on yourself.
+            </Text>
+          ) : null}
         </View>
 
         {saved ? (
@@ -189,6 +215,8 @@ const styles = StyleSheet.create({
 
   actions: { flexDirection: "row", gap: spacing.md, marginTop: spacing.lg },
   action: { flex: 1 },
+  tryOn: { marginTop: spacing.md },
+  tryOnNote: { marginTop: spacing.md },
   savedRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, marginTop: spacing.md },
   savedLabel: { color: colors.forest },
 

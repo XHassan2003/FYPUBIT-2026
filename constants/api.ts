@@ -43,3 +43,18 @@ export const API_BASE_URL = resolveBaseUrl();
 // Short on purpose: a laptop that is asleep or on another network should cost
 // the user a moment, not a spinner that never resolves.
 export const API_TIMEOUT_MS = 4000;
+
+// Photo analysis gets its own, much longer budget. The four seconds above suit
+// a local rules call; this one uploads an image and waits on Gemini, which
+// takes a couple of seconds on its own. Reusing the short timeout would abort
+// most successful analyses.
+//
+// There is also no fallback here to hurry back to — nothing on the device can
+// read a photograph — so the honest choice is to wait, then say it failed.
+export const ANALYSIS_TIMEOUT_MS = 25000;
+
+// Virtual try-on gets longer still. It generates a photograph rather than
+// reading one, from half a dozen reference images, and that is tens of seconds
+// of work on a good day. The screen says what it is doing throughout, so a
+// long wait is a wait rather than a hang.
+export const TRY_ON_TIMEOUT_MS = 120000;

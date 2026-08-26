@@ -1,15 +1,30 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { API_BASE_URL, API_TIMEOUT_MS } from "@/constants/api";
-import { CATEGORIES, Category, Occasion, WardrobeItem, mockWardrobe, colorPairings } from "@/data/mockWardrobe";
+import { ANALYSIS_TIMEOUT_MS, API_BASE_URL, API_TIMEOUT_MS, TRY_ON_TIMEOUT_MS } from "@/constants/api";
+import {
+  CATEGORIES,
+  Category,
+  OCCASIONS,
+  Occasion,
+  WardrobeItem,
+  mockWardrobe,
+  colorPairings,
+} from "@/data/mockWardrobe";
 import { COLOR_SEASONS, ColorSeason, SeasonId } from "@/data/colorSeasons";
+import { SWATCHES } from "@/data/swatches";
 
 export interface Outfit {
   id: string;
   itemIds: string[];
   occasion: Occasion;
   createdAt: number;
+  /**
+   * A generated try-on image, when the look was saved from that flow. Optional
+   * and additive, so a wardrobe persisted before this existed rehydrates
+   * unchanged — no version bump or migration needed.
+   */
+  previewImage?: string;
 }
 
 export interface Measurements {
@@ -33,6 +48,46 @@ export interface Profile {
     includeAccessories: boolean;
   };
 }
+
+/**
+ * What the service could read off a garment photo. Every field is optional:
+ * the analyser reports only what it could actually determine, so a field it
+ * was unsure of arrives absent and the form leaves it for the user. An empty
+ * field costs one tap; a confidently wrong one costs trust.
+ */
+export interface GarmentAnalysis {
+  name?: string;
+  brand?: string;
+  category?: Category;
+  occasions: Occasion[];
+  /** The app swatch the detected colour was snapped to. */
+  color?: string;
+  colorName?: string;
+  /** What Gemini actually saw, and its distance from the chosen swatch. */
+  detectedColor?: string;
+  deltaE?: number;
+}
+
+/**
+ * No fallback here, unlike the outfit and the match score — nothing on the
+ * device can read a photograph. So the failure is reported rather than papered
+ * over, and the user fills the form in by hand as they always did.
+ */
+export type AnalysisOutcome =
+  | { ok: true; analysis: GarmentAnalysis }
+  | { ok: false; message: string };
+
+/** One reference image for the try-on: a garment, already encoded. */
+export interface TryOnGarment {
+  image: string;
+  mimeType: string;
+  name?: string;
+  category?: string;
+}
+
+export type TryOnOutcome =
+  | { ok: true; image: string; mimeType: string }
+  | { ok: false; message: string };
 
 export interface OutfitSuggestion {
   items: WardrobeItem[];
@@ -79,7 +134,7 @@ interface WardrobeState {
   addItem: (item: Omit<WardrobeItem, "id">) => void;
   removeItem: (id: string) => void;
   toggleFavorite: (id: string) => void;
-  saveOutfit: (itemIds: string[], occasion: Occasion) => void;
+  saveOutfit: (itemIds: string[], occasion: Occasion, previewImage?: string) => void;
   removeOutfit: (id: string) => void;
   suggestOutfit: (occasion: Occasion) => Promise<OutfitSuggestion>;
   updateProfile: (patch: Partial<Profile>) => void;
@@ -87,6 +142,12 @@ interface WardrobeState {
   setColorSeason: (season: SeasonId) => void;
   setAvatarUri: (uri: string) => void;
   matchItemToProfile: (item: WardrobeItem) => Promise<MatchResult>;
+  analyseGarment: (imageBase64: string, mimeType: string) => Promise<AnalysisOutcome>;
+  generateTryOn: (
+    personBase64: string,
+    personMimeType: string,
+    garments: TryOnGarment[]
+  ) => Promise<TryOnOutcome>;
 }
 
 // Deterministic pseudo-score so the same item always shows the same match
@@ -231,6 +292,125 @@ async function fetchMatch(item: WardrobeItem, season: ColorSeason): Promise<Matc
 }
 
 /**
+ * Send a garment photo to the service and get back what it could read.
+ *
+ * The app's own vocabulary travels with the request — categories, occasions
+ * and swatches — so the answer comes back in terms the form can use directly,
+ * and the service holds no second copy of any of it.
+ */
+async function fetchAnalysis(imageBase64: string, mimeType: string): Promise<GarmentAnalysis> {
+  if (!API_BASE_URL) throw new Error("No analyser address configured");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/analyse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image: imageBase64,
+        mimeType,
+        categories: CATEGORIES,
+        occasions: OCCASIONS,
+        swatches: SWATCHES,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      // Three failures worth telling apart, because each asks the user to do
+      // something different: fix the setup, wait, or give up and type it in.
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        response.status === 503
+          ? "The analyser is not set up yet — the service needs a Gemini API key."
+          : response.status === 429
+            ? "The analyser is busy right now. Wait a moment and try the photo again."
+            : `Analyser responded ${response.status}${detail ? `: ${detail.slice(0, 120)}` : ""}`
+      );
+    }
+
+    const data = await response.json();
+    if (typeof data !== "object" || data === null) {
+      throw new Error("Analyser returned an unexpected shape");
+    }
+
+    // Everything is checked before it reaches the form. The service already
+    // filters against the vocabulary it was sent, but this is the boundary
+    // where a wrong value would become a wardrobe item.
+    return {
+      name: typeof data.name === "string" ? data.name : undefined,
+      brand: typeof data.brand === "string" ? data.brand : undefined,
+      category: CATEGORIES.includes(data.category) ? (data.category as Category) : undefined,
+      occasions: Array.isArray(data.occasions)
+        ? data.occasions.filter((occasion: unknown): occasion is Occasion =>
+            OCCASIONS.includes(occasion as Occasion)
+          )
+        : [],
+      color: typeof data.color === "string" ? data.color : undefined,
+      colorName: typeof data.colorName === "string" ? data.colorName : undefined,
+      detectedColor: typeof data.detectedColor === "string" ? data.detectedColor : undefined,
+      deltaE: typeof data.deltaE === "number" ? data.deltaE : undefined,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Ask the service to generate the wearer in their chosen outfit.
+ *
+ * The same three failures as the analyser, told apart for the same reason: fix
+ * the setup, wait, or give up. This one adds a fourth — the model declining to
+ * produce an image at all — which the service reports as a 502 with a message
+ * worth showing verbatim, because it usually says what to change about the
+ * photo.
+ */
+async function fetchTryOn(
+  personBase64: string,
+  personMimeType: string,
+  garments: TryOnGarment[]
+): Promise<{ image: string; mimeType: string }> {
+  if (!API_BASE_URL) throw new Error("No try-on address configured");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TRY_ON_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/try-on`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ person: personBase64, personMimeType, garments }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      if (response.status === 503) {
+        throw new Error("Try-on is not set up yet — the service needs a Gemini API key.");
+      }
+      if (response.status === 429) {
+        throw new Error("The studio is busy right now. Wait a moment and try again.");
+      }
+      // The service's own words: for a refused or unusable photo they say
+      // what to change, which is more use than anything generic.
+      const parsed = detail.match(/"detail"\s*:\s*"([^"]+)"/);
+      throw new Error(parsed?.[1] ?? `Try-on responded ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (typeof data?.image !== "string" || !data.image) {
+      throw new Error("Try-on returned no image");
+    }
+
+    return { image: data.image, mimeType: typeof data.mimeType === "string" ? data.mimeType : "image/jpeg" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
  * The pre-service scoring, kept as the fallback. It only ever compared colour
  * names against a hardcoded list and dressed the result up with a hash of the
  * item id, so treat the number it returns as decoration — the real one comes
@@ -280,9 +460,12 @@ export const useWardrobe = create<WardrobeState>()(
           items: state.items.map((item) => (item.id === id ? { ...item, favorite: !item.favorite } : item)),
         })),
 
-      saveOutfit: (itemIds, occasion) =>
+      saveOutfit: (itemIds, occasion, previewImage) =>
         set((state) => ({
-          outfits: [{ id: `outfit-${Date.now()}`, itemIds, occasion, createdAt: Date.now() }, ...state.outfits],
+          outfits: [
+            { id: `outfit-${Date.now()}`, itemIds, occasion, createdAt: Date.now(), previewImage },
+            ...state.outfits,
+          ],
         })),
 
       removeOutfit: (id) =>
@@ -346,6 +529,42 @@ export const useWardrobe = create<WardrobeState>()(
         } catch (error) {
           console.warn("[stylist] matcher unavailable, scoring on-device instead:", error);
           return { ...localMatch(item, season), scoredOffline: true };
+        }
+      },
+
+      // No fallback: reading a photograph is the one thing the device cannot
+      // do for itself. A failure is reported so the form can say so and the
+      // user carries on filling it in by hand.
+      analyseGarment: async (imageBase64, mimeType) => {
+        try {
+          return { ok: true, analysis: await fetchAnalysis(imageBase64, mimeType) };
+        } catch (error) {
+          console.warn("[stylist] garment analysis failed:", error);
+          const message =
+            error instanceof Error && error.name === "AbortError"
+              ? "The analyser took too long. Fill the details in below."
+              : error instanceof Error
+                ? error.message
+                : "Could not analyse that photo.";
+          return { ok: false, message };
+        }
+      },
+
+      // Like the analyser, there is nothing on the device to fall back to, so
+      // a failure is reported rather than papered over.
+      generateTryOn: async (personBase64, personMimeType, garments) => {
+        try {
+          const result = await fetchTryOn(personBase64, personMimeType, garments);
+          return { ok: true, ...result };
+        } catch (error) {
+          console.warn("[stylist] try-on failed:", error);
+          const message =
+            error instanceof Error && error.name === "AbortError"
+              ? "The studio took too long. Try again, or pick a simpler look."
+              : error instanceof Error
+                ? error.message
+                : "Could not create that look.";
+          return { ok: false, message };
         }
       },
     }),
