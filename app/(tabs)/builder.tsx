@@ -197,7 +197,9 @@ const styles = StyleSheet.create({
 
   stageSection: { marginTop: spacing.xl + spacing.xs, paddingHorizontal: gutter },
   stage: { borderWidth: 1, borderColor: inkAlpha.a10, overflow: "hidden" },
-  stageImage: { ...StyleSheet.absoluteFillObject, opacity: 0.7 },
+  // Written out rather than spread: RN 0.85 removed StyleSheet.absoluteFillObject,
+  // and absoluteFill is a registered style, not a plain object to spread into.
+  stageImage: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, opacity: 0.7 },
   stageRow: { flexDirection: "row", gap: spacing.md, padding: spacing.lg, minHeight: 248 },
   stageSlot: { flex: 1 },
   stageThumb: { width: "100%", height: 176 },
