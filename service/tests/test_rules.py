@@ -14,7 +14,7 @@ were broken.
 import pytest
 
 from models import SeasonPayload, WardrobeItem
-from rules import _Scores, _candidate_cores, build_outfit
+from rules import _Scores, _candidate_cores, _shortlist, build_outfit
 
 RUNS = 25
 
@@ -206,6 +206,60 @@ def test_outerwear_and_accessories_still_layer_over_a_dress():
 
     assert all("kameez" in outfit for outfit in outfits)
     assert all("coat" in outfit for outfit in outfits)
+
+
+def test_a_users_own_clothes_are_not_cut_by_the_shortlist_alphabetically():
+    """A bug found from the outside: "it never recommends the shirts I added".
+
+    `_shortlist` keeps the best ten per category, and ties used to be broken by
+    `item.id`. Ties are not the rare case — with no colour season recorded every
+    garment scores NEUTRAL, so merit collapses to the occasion term and every
+    suitable garment ties exactly. The cap then meant "the ten alphabetically
+    first", the same ten on every call.
+
+    That had a specific victim. Seed pieces are `top-1`, `top-2`; the app names
+    a piece the user adds `${category}-${Date.now()}`, so `tops-1757...`. In
+    ASCII `-` (0x2D) sorts before `s` (0x73), which put every id the app
+    generates behind every id in the seed data. Past ten seeded tops, a user's
+    own shirts could not be recommended at all.
+
+    Eleven identical seeded tops here, so the cap bites and everything ties. The
+    uploaded shirt is a strong colour for the rest of the outfit, so if it is
+    ever shortlisted it should win — which makes this a clean test of whether it
+    is being seen at all. It scored 0/300 before the fix.
+    """
+    seed = [garment(f"top-{n}", "tops", "#8A9A80", "sage", ["casual"]) for n in range(1, 12)]
+    mine = garment("tops-1757000000001", "tops", "#1C1B19", "black", ["casual"])
+    wardrobe = [
+        *seed,
+        mine,
+        garment("bottom-1", "bottoms", "#D8D2C4", "stone", ["casual"]),
+        garment("shoe-1", "shoes", "#FFFFFF", "white", ["casual"]),
+    ]
+
+    outfits = ids_over_runs(wardrobe, "casual")
+    appearances = sum(1 for outfit in outfits if mine.id in outfit)
+
+    # Deliberately loose. The point is "reachable", not a hit rate — pinning a
+    # proportion would make this fail on an unlucky shuffle for no good reason.
+    assert appearances > 0, "the user's own shirt was never recommended"
+
+
+def test_the_shortlist_cap_does_not_always_drop_the_same_garments():
+    """The general form of the bug above, without the id coincidence.
+
+    Whatever the naming, when more garments tie than the cap admits, the ones
+    that survive must not be the same set every time — otherwise part of the
+    wardrobe is permanently invisible.
+    """
+    scores = _Scores(None)
+    tied = [garment(f"top-{n:02d}", "tops", "#8A9A80", "sage", ["casual"]) for n in range(20)]
+
+    seen = {
+        tuple(sorted(item.id for item in _shortlist(tied, "tops", "casual", scores)))
+        for _ in range(30)
+    }
+    assert len(seen) > 1, "the same ten garments survive the cap on every call"
 
 
 def test_shoes_alone_are_not_offered_as_an_outfit():

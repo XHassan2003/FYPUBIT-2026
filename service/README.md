@@ -324,6 +324,16 @@ returned.
    reached when nothing in it suits, so a sparse wardrobe still produces a
    complete outfit rather than a gap. Ten per category survive.
 
+   **Ties are broken at random, and that is a fix rather than a flourish.** They
+   used to be broken by `item.id`, which sounds harmless until you notice ties
+   are the normal case: with no colour season recorded every garment scores
+   NEUTRAL, so merit collapses to the occasion term and everything suitable ties
+   exactly. The cap then meant "the ten alphabetically first" — the same ten
+   forever. Seed pieces are `top-1`; the app names a user's piece
+   `${category}-${Date.now()}`, so `tops-1757…`, and `-` sorts before `s`. Past
+   ten seeded tops, **a user's own clothes could never be recommended at all.**
+   Shuffle then stable-sort keeps the ranking and removes the arbitrary cut.
+
    **`dresses` is the exception: it is shortlisted strictly.** A wardrobe with
    no workout trousers still needs trousers, so `bottoms` falls back to whatever
    exists. A one-piece garment is not a slot that must be filled — it is an

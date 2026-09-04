@@ -131,9 +131,31 @@ def _shortlist(
     def merit(item: WardrobeItem) -> float:
         return _occasion_score(item, occasion) + scores.season(item)
 
-    # Sorted by merit, ties broken by id so the shortlist itself is stable — the
-    # variety should come from the shortlist choice, not from dictionary order.
-    return sorted(pool, key=lambda item: (-merit(item), item.id))[:limit]
+    # Ties are broken at random, and that matters more than it sounds.
+    #
+    # This sorted by `(-merit, item.id)` at first, for a stable shortlist. The
+    # trouble is that ties here are not rare, they are the normal case: with no
+    # colour season recorded every garment scores NEUTRAL, so merit collapses to
+    # the occasion term and every garment meant for the occasion ties exactly.
+    # The cap then stops being "the ten best" and becomes "the ten
+    # alphabetically first", which is arbitrary — and, worse, *consistently*
+    # arbitrary, so the same garments are excluded on every single call.
+    #
+    # It also had a specific victim. Seeded pieces are `top-1`, `top-2`; a piece
+    # the user adds is `${category}-${Date.now()}`, so `tops-1757...`. Compare
+    # those and `-` (0x2D) beats `s` (0x73), which put every id the app
+    # generates behind every id in the seed data. A wardrobe with more than ten
+    # tops silently never recommended the user's own clothes — which is exactly
+    # how this was found.
+    #
+    # Shuffle first, then sort: Python's sort is stable, so equal merit keeps
+    # the shuffled order and better merit still wins outright. Nothing about the
+    # ranking changes, only who survives an arbitrary cut. `build_outfit`
+    # already chooses at random among close outfits, so this is the same idea
+    # one step earlier rather than a new source of randomness.
+    shuffled = list(pool)
+    random.shuffle(shuffled)
+    return sorted(shuffled, key=lambda item: -merit(item))[:limit]
 
 
 class _Scores:
