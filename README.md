@@ -6,7 +6,7 @@ Clerk sign-in with email or Google. There is still no backend and no database �
 device. That is deliberate; this is the demo layer, and the AI service plugs in
 later at two functions.
 
-Built with Expo SDK 54, expo-router, TypeScript, zustand and Clerk.
+Built with Expo SDK 57, expo-router, TypeScript, zustand and Clerk.
 
 ---
 
@@ -128,12 +128,24 @@ edit. This has already cost one debugging session chasing a bug that was not
 there. After editing it, reload properly (`r` in the Metro terminal, or restart
 with `npx expo start --clear`) before concluding anything.
 
-Before pushing, check both of these pass:
+Before pushing, check all three of these pass:
 
 ```bash
 npx tsc --noEmit
 npx expo lint
+npm test
 ```
+
+`npm test` is Jest, through the `jest-expo` preset so React Native and Expo
+modules resolve the way they do on a device. There is one suite so far —
+`store/__tests__/useTryOn.test.ts`, covering the photo check on step three of
+the try-on flow, which is pure arithmetic guarding a paid API call and exactly
+the kind of thing that breaks quietly. The Python service has its own suite; see
+[service/README.md](service/README.md#tests).
+
+`jest.setup.js` swaps AsyncStorage for the in-memory mock the library ships.
+Without it, anything importing a store fails at import, because AsyncStorage is
+a native module and there is no device under Jest.
 
 If you touched anything under `service/`, run its suite too — from that folder,
 and it takes under a second:
@@ -167,6 +179,8 @@ data/mockWardrobe.ts     20 seed items + the placeholder colour-pairing rules
 data/colorSeasons.ts     four seasonal palettes, the quiz questions, computeSeason()
 store/useWardrobe.ts     zustand + persist — items, outfits, profile, suggestOutfit(), matchItemToProfile()
 store/useTryOn.ts        the try-on in progress — shared by Home and the flow, not persisted
+store/__tests__/useTryOn.test.ts  the photo check on step three, both sides of every threshold
+jest.setup.js            stands in for the native modules Jest has no device for
 hooks/useDisplayName.ts  Clerk's name for the Style greeting and the Profile heading
 hooks/useGarmentAnalysis.ts  pick, resize and read a garment photo
 
@@ -323,21 +337,36 @@ Three rules it follows, all worth keeping if the model behind it changes:
 Swapping in OpenCV and YOLO later is a change to `service/vision.py` alone —
 the endpoint, the shapes and the app wiring stay as they are.
 
-**Virtual try-on is built too**, also on Gemini for now. "Try it on" in the
-Builder opens a five-step flow: your photograph, the pieces you want to see,
-a last look at both, the wait, and the result. `app/try-on.tsx` holds the order
-things happen in, `components/TryOnSteps.tsx` the drawing, `hooks/useTryOn.ts`
-the work — picking, resizing, encoding every garment, and writing the result to
-a file so it can be shared and saved against the look.
+**Virtual try-on is built too**, on **CatVTON** — a model built for try-on, not
+a general image model asked to imitate one. "Try it on" in the Builder opens a
+five-step flow: your photograph, the piece you want to see, a last look at both,
+the wait, and the result. `app/try-on.tsx` holds the order things happen in,
+`components/TryOnSteps.tsx` the drawing, `store/useTryOn.ts` the work — picking,
+resizing, encoding, and writing the result to a file so it can be shared and
+saved against the look.
 
-Only pieces **with a photograph** can be tried on, and only six at a time. The
-generator works from images: a silhouette tells it nothing about the garment.
+CatVTON treats try-on as **inpainting**: only the garment region is
+regenerated, so the face, hair, pose and background come through untouched. That
+is the whole reason it replaced the earlier Gemini implementation, which
+composed a *new* photograph from references and could not promise the output
+contained the same person as the input.
 
-Be careful how this one is described. A purpose-built try-on model warps a
-specific garment onto a specific body; this asks a general image model to
-compose a new photograph from references. The result usually looks *plausible*
-rather than *accurate*, and faces drift. It demonstrates the idea — it is not a
-fitting room, and saying so first is much better than being caught out.
+It runs hosted on fal, so it needs a `FAL_KEY` in `service/.env` and no GPU.
+See [service/README.md](service/README.md#how-the-try-on-works) for the method,
+the cloth-type mapping and why it is hosted rather than local.
+
+**Two limits, and both are the model rather than the app.** It fits **one
+garment per pass**, and it fits **tops, bottoms and outerwear only** — it was
+trained on VITON-HD and DressCode, which have no notion of shoes or bags. The
+picker offers exactly what can be worn rather than letting someone choose a
+piece that would be refused. A piece also needs **a photograph**: a silhouette
+tells the model nothing.
+
+Still worth describing carefully, just for different reasons than before. This
+is a real try-on model and the garment does survive onto the body — but it is
+one garment at a time, it cannot do a head-to-toe look, and the fit it shows is
+plausible drape rather than a measurement. It is not a fitting room, and saying
+so first is much better than being caught out.
 
 ## Status
 
@@ -346,6 +375,10 @@ Done:
 - All seven screens plus the try-on flow, wired to the shared store
 - Virtual try-on moved to the centre of the app: Home is the landing, and the
   tab bar's raised button opens it from anywhere
+- Virtual try-on moved off Gemini onto **CatVTON**, a purpose-built try-on
+  model — inpainting rather than composition, so the wearer's face, hair, pose
+  and background survive. Run end to end against fal on a real photograph:
+  ~11s per generation, identity and background held, garment applied cleanly
 - The colour analysis feature — quiz, seasonal palettes, per-item match checker
 - Full design system and fifteen shared components
 - Email and Google sign-in, both verified on a device
@@ -383,13 +416,115 @@ options and add a `migrate` function. Otherwise an already-installed app will
 rehydrate into a state the new code does not expect. To wipe storage during
 development, uninstall the app or call `useWardrobe.persist.clearStorage()`.
 
+## Putting your own clothes in
+
+The seeded wardrobe is stock photography. Your own clothes are better on every
+axis that matters — and not only the legal one, though that one is real:
+retailer product photos belong to the retailer and cannot go in a submitted
+project.
+
+They are also **better input**. A garment laid flat or hung against a plain wall
+is the reference CatVTON was trained on, and it beats every editorial photo in
+the seed wardrobe. The South Asian formalwear in there is the weakest set of
+garments in the app precisely because those are pictures of *people* rather than
+pictures of *clothes*.
+
+Photograph them, then run this once from `service/`:
+
+```bash
+python tools/import_wardrobe.py ~/Pictures/my-clothes
+```
+
+Each photo goes through `/analyse` — the same endpoint Add Piece uses — so the
+name, category, colour and occasions come back filled in. The images are scaled
+into `assets/images/wardrobe/` and `data/myWardrobe.ts` is written, which the
+store unions with the seed on the next launch. No version bump, no re-typing,
+and `--dry-run` shows what it would do without writing anything.
+
+How to shoot them, in order of how much each matters:
+
+1. One garment per photo, filling most of the frame.
+2. Flat on the floor or hung against a plain wall. A door is fine.
+3. Front on, not at an angle, and not crumpled.
+4. Even light — daylight indoors, away from direct sun, beats a flash.
+
+**Check the categories in the generated file before demoing.** A shalwar kameez
+or kurta must be `dresses`; filed as `tops`, try-on fits its upper half and
+leaves your own trousers showing underneath.
+
+Adding one piece at a time on the phone still works exactly as before — Add
+Piece does the same analysis. The tool is only for doing twenty at once.
+
+## Console noise you can ignore
+
+Two messages appear on every launch. Neither is a bug in this project, and
+neither should be "fixed" — worth knowing before one of them derails a demo.
+
+**`Clerk has been loaded with development keys`** — a `WARN`, and correct. The
+key is `pk_test_…`, a Clerk development instance, which is what the setup above
+asks for. Silencing it means a production instance with a verified domain, which
+would also mean supplying your own Google OAuth client instead of using Clerk's
+shared development credentials. That is a deployment step, not a repair.
+
+**`Can't perform a React state update on a component that hasn't mounted yet`** —
+upstream in expo-router, not in this app. The state update is
+`onUnhandledLinking` in `expo-router/build/fork/useLinking.native.js`, where the
+promise from `getInitialURL()` resolves before the navigator has mounted. That
+provider sits *above* `app/_layout.tsx`, so nothing here causes it and nothing
+here can prevent it. The stack contains no frame from this project.
+
+It is also **development-only** — `warnAboutUpdateOnNotYetMountedFiberInDEV` is
+compiled out of production builds, and React applies the update once the
+component mounts, so nothing misbehaves. Tracked as
+[expo/expo#35224](https://github.com/expo/expo/issues/35224), and there is no
+version to move to: `57.0.19` is the latest stable in the 57 line and everything
+newer on npm is a 58 canary. It goes away when Expo fixes it.
+
 ## Known gaps (say these out loud in the demo)
 
 - Accounts exist, but nothing is stored against them. The wardrobe is still
   per-device — that needs a backend and a database.
-- Virtual try-on composes a new photograph rather than fitting a garment to a
-  body. Plausible, not accurate — and **not yet run end to end**, because the
-  Gemini quota ran out before it could be.
+- Virtual try-on does one garment at a time, and only tops, bottoms, dresses
+  and outerwear. **There is no head-to-toe look** — no open try-on model handles
+  shoes or accessories, so the picker does not offer them. The fit it shows is
+  plausible drape, not a measurement.
+- The outfit recommender **weighs a dress against separates by variance, not
+  just by merit.** `build_outfit` scores a dress-and-shoes core against a
+  top-bottom-shoes one, and harmony is the mean over every *pair* of pieces — so
+  a two-piece core has one pair where a three-piece has three. One pair does not
+  regress toward the middle the way three do, so dress cores land at the
+  extremes slightly more often. It is variance rather than bias, and it is the
+  behaviour the two-piece shape has always had, but it does mean a dress wins
+  the top slot a little more often than its average quality alone would earn.
+- **The seeded wardrobe is stock photography, not anyone's real clothes.** The
+  strongest version of this demo is your own wardrobe, and
+  `service/tools/import_wardrobe.py` exists to make that a five-minute job —
+  see "Putting your own clothes in" below. Retailer product photos (Khaadi,
+  Sapphire, J., Outfitters) are those companies' copyrighted work and are not
+  an option for a submitted project.
+- **The South Asian formalwear uses editorial photographs, not product shots.**
+  Unsplash has very little Pakistani or Indian clothing shot flat or on a
+  hanger, so those pieces are photographs of models wearing the garment. That is
+  a weaker reference — the model has to separate garment from wearer before it
+  can transfer anything — and those items come out noticeably less crisp than
+  the hanger-shot shirts. Swapping in real product photography is the single
+  biggest quality improvement available to this feature.
+- Virtual try-on is **sensitive to the input photograph**, more than anything
+  else in the app. One person, head to foot, front on, plain background, no
+  bulky coat — that is what CatVTON was trained on, and a photo that breaks
+  those rules produces a shapeless smear rather than a garment. The bundled
+  sample obeys them and step one of the flow spells them out. Step three warns
+  before generating, but **only about what the pixel dimensions give away** — a
+  landscape photo, a near-square crop, a thumbnail. It reads width and height
+  and nothing else, so it cannot see how much of the frame the person fills, or
+  whether they are facing the camera, or what they are already wearing, which
+  are the things that actually spoil a result. The 928x1152 editorial photo that
+  produced the smeared coat passes every check silently. **No warning is not a
+  verdict that the photo is good**, and the UI is careful not to imply it is.
+- Garment **fine detail does not fully survive**. An Oxford shirt comes back the
+  right colour and roughly the right shape, but the collar and buttons are lost.
+  Colour and silhouette transfer well; structure does not. Say "see how it
+  looks on you", not "see how it fits".
 - Outfit selection is a scoring function, not a learned model. It measures real
   colour relationships, but the weights behind it were reasoned about and
   sanity-checked against the seed wardrobe, not fitted to anyone's preferences.
@@ -403,5 +538,42 @@ development, uninstall the app or call `useWardrobe.persist.clearStorage()`.
   generated `index.html` loads the bundle as a classic script while zustand's
   devtools middleware — pulled in alongside `persist` from `zustand/middleware` —
   ships `import.meta.env`. Only mention web if someone asks.
+- **`npm audit` reports 28 moderate vulnerabilities, and they are being left
+  alone deliberately.** See below for why that is the right call rather than
+  laziness.
 
 Being upfront about these reads far better than being caught out.
+
+### The `npm audit` findings
+
+Checked 4 September 2026, against Expo SDK 57.0.20 and `@clerk/expo` 4.6.5.
+This picture will change as those update — re-run `npm audit` before relying on
+it.
+
+28 flagged packages, but only **three actual advisories**, all moderate, none
+high or critical. Every one arrives through Expo's or Clerk's own dependency
+tree; none is a package this project chose.
+
+| advisory | reaches us through | runs in the app? |
+| --- | --- | --- |
+| `uuid <11.1.1` — missing buffer bounds check | `expo-sharing` → `@expo/config-plugins` → `xcode` | **No.** `xcode` writes native iOS project files during `prebuild`; it never executes on a device |
+| `stream-json <=3.4.0` — O(depth²) filters, DoS | `@clerk/expo` → `@clerk/clerk-js` → `@solana/wallet-adapter-base` → `@solana/web3.js` → `jayson` | **No.** Solana wallet support inside Clerk; this app has no Web3 auth, so nothing imports it and Metro does not bundle it |
+| `decode-uri-component <=0.4.2` — DoS on malformed percent-encoding | `expo-router` → `query-string` | **Yes** — the only one that does. expo-router parses URLs, and this app handles OAuth redirects and deep links |
+
+Only the third is worth a sentence in a viva, and the honest framing is that its
+impact is a hang in the user's *own* app after opening a malicious link — a
+client-side stall, not a server compromise or a data leak.
+
+**⚠️ Do not run `npm audit fix --force`.** npm's proposed fix for the third is
+`expo-router@5.1.11`, flagged `isSemVerMajor`. This project is on **57.0.19**, so
+that is not an upgrade — it is a downgrade across dozens of major versions that
+would take the whole app with it. npm's resolver has no idea it is proposing
+that.
+
+`npm audit fix` without `--force` was run as a dry run and **changes nothing**:
+two advisories have no fix at all, and the third only "resolves" via that
+downgrade. There is no action available that improves the situation.
+
+So the position is: accept all three, and let them clear when Expo and Clerk bump
+their own transitive dependencies. A clean audit bought by breaking the router
+would be worse engineering than a documented one.

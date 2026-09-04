@@ -266,7 +266,7 @@ const styles = StyleSheet.create({
   ash: { color: colors.ash },
 
   hero: { height: 420, width: "100%", overflow: "hidden" },
-  heroImageWrap: { ...StyleSheet.absoluteFillObject },
+  heroImageWrap: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 },
   heroImage: { width: "100%", height: "100%" },
   heroFade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 160 },
   heroTop: {

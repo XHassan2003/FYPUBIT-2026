@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from color import score_item_against_season
+from errors import VisionFailed, VisionRateLimited, VisionUnavailable
 from models import (
     AnalyseRequest,
     AnalyseResponse,
@@ -27,10 +28,11 @@ from models import (
 )
 from rules import build_outfit
 from tryon import generate_try_on
-from vision import VisionFailed, VisionRateLimited, VisionUnavailable, analyse_garment
+from vision import analyse_garment
 
-# Before anything reads GEMINI_API_KEY. The path is explicit because npm runs
-# the service from the project root, so the working directory is not this one.
+# Before anything reads GEMINI_API_KEY (photo analysis) or FAL_KEY (try-on).
+# The path is explicit because npm runs the service from the project root, so
+# the working directory is not this one.
 load_dotenv(Path(__file__).parent / ".env")
 
 app = FastAPI(
@@ -139,11 +141,16 @@ def analyse(request: AnalyseRequest) -> AnalyseResponse:
 
 @app.post("/try-on", response_model=TryOnResponse)
 def try_on(request: TryOnRequest) -> TryOnResponse:
-    """Compose the wearer into their chosen outfit.
+    """Fit the wearer's chosen garment onto their photograph.
 
-    Slower and dearer than the other endpoints — it generates a photograph
-    rather than reading one — so the app gives it a much longer budget and says
-    what it is doing while it waits.
+    CatVTON, hosted on fal — see tryon.py. Slower and dearer than the other
+    endpoints because it runs a diffusion model rather than reading an image,
+    so the app gives it a much longer budget and says what it is doing while it
+    waits.
+
+    One garment per request. The model fits a single masked region and has no
+    multi-garment mode, so `garments` is a list of one; sending more is refused
+    before anything is spent.
     """
     try:
         result = generate_try_on(

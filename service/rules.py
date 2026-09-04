@@ -20,10 +20,17 @@ the same wardrobe and the same occasion produce the same answer forever, which
 would make "Surprise me" and the daily suggestion static. A shortlist keeps the
 quality while leaving the variety the random version had by accident.
 
-*The core is chosen first.* Top, bottom and shoes are scored as a set, then
-outerwear and an accessory are added only if they earn their place. Scoring all
-five together would let outfit length distort the comparison, and a coat is a
-decision about whether to wear a coat, not a fourth of the outfit.
+*The core is chosen first.* The core is scored as a set, then outerwear and an
+accessory are added only if they earn their place. Scoring everything together
+would let outfit length distort the comparison, and a coat is a decision about
+whether to wear a coat, not a fourth of the outfit.
+
+*A core comes in two shapes.* Either a top, a bottom and shoes, or a one-piece
+garment and shoes — a shalwar kameez, a kurta, a sari, a lehenga, a dress. Both
+shapes are generated and then compete in the same ranking, which is the only
+honest way to compare them: a dress is not a better top, it is a different
+answer to the same question, and the scoring already measures whole sets rather
+than slots.
 """
 
 import random
@@ -204,6 +211,86 @@ def _best_extra(
     return best if score >= EXTRA_PIECE_THRESHOLD else None
 
 
+def _candidate_cores(
+    items: Sequence[WardrobeItem],
+    occasion: str,
+    scores: _Scores,
+) -> list[list[WardrobeItem]]:
+    """Every core worth scoring, in both shapes a look can take.
+
+    Two shapes, generated separately and returned in one list so they compete
+    directly:
+
+      top + bottom + shoes
+      dress + shoes
+
+    where "dress" is any one-piece garment — a shalwar kameez, a kurta, a sari,
+    a lehenga, a western dress. It is not a third slot bolted onto the first
+    shape: it *replaces* the top and the bottom, so an outfit containing one has
+    no business also containing trousers.
+
+    Pieces come back already filtered of gaps, in wearing order. A category the
+    wardrobe cannot fill simply drops out, so a sparse wardrobe still yields the
+    best core it can rather than nothing — the same reason the two-piece shape
+    tolerates a missing top or missing shoes.
+
+    A note on comparing the shapes fairly. `_score_set` averages its terms over
+    the pieces, so a shorter core is not rewarded for being short. It does have
+    one quirk worth knowing: harmony is the mean over every *pair*, and a
+    dress-and-shoes core has exactly one pair where a three-piece core has
+    three. A single pair does not regress toward the middle the way three do, so
+    dress cores land at the extremes more often — brilliant when those two
+    colours sing, poor when they clash. That is variance, not bias, and it is
+    the same behaviour the two-piece shape has always had on a wardrobe with no
+    shoes in it.
+    """
+    tops = _shortlist(items, "tops", occasion, scores)
+    bottoms = _shortlist(items, "bottoms", occasion, scores)
+    shoes = _shortlist(items, "shoes", occasion, scores)
+
+    # Dresses are shortlisted *strictly*, unlike every other core category, and
+    # the asymmetry is the point. A wardrobe with no workout trousers still
+    # needs trousers, so `bottoms` falls back to whatever exists. A dress is not
+    # a slot that must be filled — it is an alternative shape — so when nothing
+    # in it suits the occasion the right answer is to offer no dress core at
+    # all and let separates carry the outfit. Without this a lehenga turns up at
+    # the gym, purely because it was the only thing in its category.
+    dresses = _shortlist(items, "dresses", occasion, scores, strict=True)
+    if not dresses and not tops and not bottoms:
+        # ...unless there is nothing else to wear, in which case the usual
+        # sparse-wardrobe rule applies and an unsuitable dress beats no outfit.
+        dresses = _shortlist(items, "dresses", occasion, scores)
+
+    # `or [None]` keeps a shape alive when one of its categories is empty;
+    # product() over an empty list yields nothing at all, which would discard
+    # the whole shape rather than the missing piece.
+    combinations = [
+        *product(tops or [None], bottoms or [None], shoes or [None]),
+        # No `or [None]` on dresses: without one there is no dress core to build,
+        # and pairing "nothing" with shoes would just duplicate a core the first
+        # shape already produced.
+        *product(dresses, shoes or [None]),
+    ]
+
+    cores = [
+        [piece for piece in combination if piece is not None]
+        for combination in combinations
+        if any(piece is not None for piece in combination)
+    ]
+
+    # Shoes on their own are not an outfit. The two-piece shape yields exactly
+    # that when the wardrobe has shoes but no top and no bottom — it always did,
+    # and it went unnoticed while shoes were the only thing that could be left
+    # standing. Now that a dress core competes beside it, a lone pair of shoes
+    # can score inside the tolerance band and get worn *instead of the dress*.
+    #
+    # Dropped rather than penalised, so the ranking stays a ranking. The `or`
+    # keeps the old behaviour for a wardrobe that genuinely holds nothing but
+    # shoes: something to wear beats nothing.
+    dressed = [core for core in cores if any(piece.category != "shoes" for piece in core)]
+    return dressed or cores
+
+
 def build_outfit(
     items: Sequence[WardrobeItem],
     occasion: str,
@@ -212,35 +299,25 @@ def build_outfit(
 ) -> list[WardrobeItem]:
     """Assemble a head-to-toe look from the user's own wardrobe.
 
-    Returns the pieces in wearing order — top, bottom, shoes, then outerwear and
-    an accessory if they earn a place. A category the wardrobe cannot fill is
-    simply absent, so a sparse wardrobe still produces the best outfit it can
-    rather than nothing.
+    Returns the pieces in wearing order — either top, bottom, shoes or a
+    one-piece garment and shoes, then outerwear and an accessory if they earn a
+    place. A category the wardrobe cannot fill is simply absent, so a sparse
+    wardrobe still produces the best outfit it can rather than nothing.
 
     `season` is the user's colour analysis. Without it the season term abstains
     and the outfit is chosen on harmony and occasion alone.
     """
     scores = _Scores(season)
 
-    tops = _shortlist(items, "tops", occasion, scores)
-    bottoms = _shortlist(items, "bottoms", occasion, scores)
-    shoes = _shortlist(items, "shoes", occasion, scores)
-
-    # Each of these may be empty; product() over an empty list yields nothing,
-    # so fall back to the categories that do have something in them.
-    cores = [
-        core
-        for core in product(tops or [None], bottoms or [None], shoes or [None])
-        if any(piece is not None for piece in core)
-    ]
+    cores = _candidate_cores(items, occasion, scores)
     if not cores:
         return []
 
     scored_cores = sorted(
         (
             (
-                -_score_set([p for p in core if p is not None], occasion, scores),
-                tuple(p.id for p in core if p is not None),
+                -_score_set(core, occasion, scores),
+                tuple(piece.id for piece in core),
                 core,
             )
             for core in cores
@@ -258,7 +335,7 @@ def build_outfit(
     ]
 
     _, _, chosen = random.choice(pool)
-    outfit = [piece for piece in chosen if piece is not None]
+    outfit = list(chosen)
 
     # Extras are shortlisted strictly: an optional piece that is not meant for
     # the occasion is simply not worn.

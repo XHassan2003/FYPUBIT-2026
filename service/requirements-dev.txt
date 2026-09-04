@@ -8,3 +8,7 @@ pytest>=8.0,<9.0
 # FastAPI's TestClient drives the app in-process. Starlette 1.x wants httpx2;
 # the older httpx still works but warns on every run.
 httpx2>=2.0,<3.0
+# Scales photographs down in tools/import_wardrobe.py. Not needed to run the
+# suite, and the tool falls back to copying without it — but then a folder of
+# phone photos lands in the repo at full size.
+Pillow>=10.0,<12.0

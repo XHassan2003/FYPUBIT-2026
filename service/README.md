@@ -1,10 +1,10 @@
 # Recommendation service
 
-The Python half of the project. Two endpoints, both doing real work now:
-`/match` scores one garment against the user's seasonal palette, and
-`/recommend` assembles a whole outfit by scoring candidates on colour harmony,
-season fit and occasion. Both measure colour in CIE Lab rather than looking it
-up in a table.
+The Python half of the project. Five endpoints, all doing real work now:
+`/match` scores one garment against the user's seasonal palette and
+`/recommend` assembles a whole outfit, both measuring colour in CIE Lab rather
+than looking it up in a table; `/analyse` reads a garment out of a photograph;
+and `/try-on` fits one onto the wearer with CatVTON.
 
 ## Setup
 
@@ -24,25 +24,44 @@ To run the tests as well, add the dev dependencies:
 pip install -r requirements-dev.txt
 ```
 
-### The Gemini key
+### The API keys
 
-`POST /analyse` needs one. Everything else works without it.
+Two, one per model-backed endpoint. `/recommend` and `/match` need neither —
+they are our own maths and work offline.
 
 ```bash
 cp .env.example .env
 ```
 
-Then paste a key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-into `GEMINI_API_KEY`.
+| Key | Endpoint | Where from |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | `POST /analyse` — reading a garment from a photo | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `FAL_KEY` | `POST /try-on` — CatVTON | [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys) |
 
-This key is a **secret**, unlike the app's Clerk publishable key. That is why
-the Gemini call lives here rather than in the app: anything named
-`EXPO_PUBLIC_*` is inlined into the bundle at build time and can be read out of
-a shipped app, and this one is billable. `service/.env` is gitignored.
+Both are **secrets**, unlike the app's Clerk publishable key. That is why these
+calls live here rather than in the app: anything named `EXPO_PUBLIC_*` is
+inlined into the bundle at build time and can be read out of a shipped app, and
+both of these are billable. `service/.env` is gitignored.
 
-Without a key, `/analyse` returns **503** rather than 500 — it is a setup
-problem, not a failure, and the app says "not set up yet" instead of asking the
-user to try again.
+Missing either one returns **503** from that endpoint rather than 500 — it is a
+setup problem, not a failure, so the app says "not set up yet" instead of asking
+the user to try again. The other endpoint keeps working; the keys are
+independent.
+
+To check them without running a model or spending anything:
+
+```bash
+python tools/check_keys.py
+```
+
+Worth it because a missing key, a key fal does not recognise, and an account
+with no balance left all arrive as the same 503, and they need different fixes.
+That tool tells them apart and prints no part of a key, so its output is safe to
+share.
+
+⚠️ **Put keys in `.env`, never in `.env.example`.** Only `.env` is gitignored.
+The template is committed, so a key pasted there is a key that ships with the
+project — and the fix then is to rotate it, not just delete the line.
 
 ⚠️ **The free tier's quota is small enough to hit while demoing.** Analysing a
 handful of photos in quick succession earns a `429`, which `/analyse` passes
@@ -146,7 +165,7 @@ should leave the picker alone rather than guess — an empty field costs one tap
 a confidently wrong one costs trust. The app only fills in fields the user has
 not already answered.
 
-`POST /try-on` — generates the wearer in their chosen outfit:
+`POST /try-on` — fits the chosen garment onto the wearer's photograph:
 
 ```json
 {
@@ -159,25 +178,117 @@ not already answered.
 ```
 
 ```json
-{ "image": "<base64 jpeg>", "mimeType": "image/jpeg" }
+{ "image": "<base64 png>", "mimeType": "image/png" }
 ```
 
-Up to **six garments** (`MAX_GARMENTS`), refused before anything is spent —
-past that the model starts dropping pieces rather than layering them, and
-finding that out costs a generation.
+**One garment** (`MAX_GARMENTS`), and that is the architecture rather than a
+setting — see "How the try-on works" below. `garments` stays a list because the
+request shape predates the model change and there was no reason to break it;
+sending more than one is refused before anything is spent.
 
-Each reference is labelled with its category and name before it is sent, so the
-model knows which image is the coat and which is the shoes. Handing it a pile
-of unnamed images layers them worse.
+`category` decides which region of the body is inpainted, so it is **required**
+now — it is not a label for a prompt any more. Only `tops`, `bottoms`,
+`dresses` and `outerwear` can be worn; `shoes` and `accessories` are refused by
+name, for free, because the model was never trained on them.
 
-The model can also **decline** and answer in text instead — a photo it will not
-dress, a safety refusal. That is a 502 whose message says what to change about
-the photograph, and the app shows it verbatim rather than replacing it with
-something generic.
+⚠️ **This is the expensive endpoint** — a diffusion model, not a read. The app
+allows it 120 seconds (`TRY_ON_TIMEOUT_MS`) against roughly 25 for analysis,
+and the service gives up at 100 (`CLIENT_TIMEOUT_S`) so that it is the one that
+explains why rather than the phone timing out on silence.
 
-⚠️ **This is the expensive endpoint.** It generates a photograph rather than
-reading one, and the free tier's quota disappears quickly. The app allows it
-120 seconds (`TRY_ON_TIMEOUT_MS`) against roughly 25 for analysis.
+Note the response is **PNG**, which is what fal returns. The app reads
+`mimeType` rather than assuming — a PNG named `.jpg` is a file some share
+targets refuse to open.
+
+### How the try-on works
+
+`tryon.py`. **CatVTON** (Chong et al., [ICLR 2025](https://arxiv.org/abs/2407.15886)),
+hosted on fal as `fal-ai/cat-vton`.
+
+The idea behind the paper is that try-on does not need the machinery everyone
+had been putting around it. There is no warping module, no pose encoder, no
+ReferenceNet and no text branch: the garment and the person are **concatenated
+along the spatial dimension** and handed to a single denoising UNet, which is
+left to work out the correspondence itself. 899M parameters in total, 49.6M of
+them trainable.
+
+The consequence that matters here is that it is **inpainting, not generation**.
+Only the masked garment region is regenerated; every pixel outside it — the
+face, the hair, the background, the pose — is carried through untouched. That is
+a guarantee the previous implementation could not make, and the reason for the
+swap.
+
+**This replaced Gemini,** and the contrast is worth stating plainly because the
+old version's honesty note is now redundant. `/try-on` used to ask
+`gemini-3.1-flash-image` to compose a *new* photograph from reference images.
+That is a different job with a different failure mode: the result looked
+*plausible* rather than *accurate*, and faces drifted, because nothing in the
+method required the output to contain the same person as the input. It was
+enough to demonstrate the idea and not enough to judge whether a coat fits.
+
+**Hosted, not local.** One HTTPS call, no GPU, no CUDA, no detectron2 — which
+matters, because the automatic-masking path in the reference implementation
+needs detectron2 and SCHP, and building those on Windows is its own project. The
+trade is a per-generation cost and a network dependency, which is the trade the
+endpoint already made with Gemini, so nothing about the deployment changed.
+
+**What it cannot do**, both enforced before a request is sent:
+
+- **One garment per pass.** It fits a single masked region. Chaining passes to
+  keep the old six-garment API was considered and rejected: the second pass
+  treats the first pass's output as a photograph, so every artifact is baked in
+  and re-inpainted, and cost and latency multiply. The app only ever sent one
+  garment anyway.
+- **Clothes only.** Trained on VITON-HD and DressCode — upper body, lower body,
+  dresses. Shoes, bags and jewellery are not in the label space, so there is no
+  prompt or setting that would make it try. `CLOTH_TYPES` is a whitelist:
+
+  | wardrobe category | CatVTON `cloth_type` |
+  | --- | --- |
+  | `tops` | `upper` |
+  | `bottoms` | `lower` |
+  | `dresses` | `overall` — one pass over the whole torso |
+  | `outerwear` | `outer` — layers over what is there, rather than replacing it |
+  | `shoes`, `accessories` | *refused* |
+
+  `dresses` covers anything worn as a single piece from shoulder to hem — a
+  shalwar kameez, a kurta, a sari, a lehenga, a western dress. `overall` is not
+  a nicety: mapping one of these to `upper` fits the top half of the garment and
+  leaves the wearer's own trousers showing underneath. DressCode, one of
+  CatVTON's two training sets, has a dresses split, so this is a case the model
+  was trained for rather than one it is being talked into.
+
+  An unknown category is refused too rather than defaulted to `upper`, which
+  would put trousers on someone's chest — and finding that out costs a
+  generation. The app knows the same list (`TRY_ON_CATEGORIES` in
+  `data/mockWardrobe.ts`) so the picker never offers a piece that would be
+  refused; the service's check is the backstop, not the only line of defence.
+
+**The input photograph decides the result**, more than any setting here. This
+was measured, not guessed — the same Oxford Shirt, the same model, the same
+code, two photographs:
+
+| person photo | time | result |
+| --- | --- | --- |
+| editorial crop — subject small in frame, chest-up, heavy coat | 64s | shapeless drape, hand smeared, no collar |
+| studio shot — full length, front on, plain wall, fitted top | 11s | clean white top, face/hair/trousers/shoes/background all intact |
+
+The rule is whatever VITON-HD and DressCode look like: **one person, head to
+foot, front on, plain background, not already in something bulky.** Break it and
+the human parser produces a poor mask, and a poor mask is what turns a shirt
+into a blob. `TRY_ON_DEMO_PHOTO` in `store/useTryOn.ts` obeys it deliberately —
+read the comment there before swapping that image for a prettier one.
+
+Even at its best, **fine garment detail does not survive**: colour and
+silhouette transfer, collars and buttons do not. That is worth being straight
+about — "see how it looks on you", not "see how it fits".
+
+**Images go up as data URIs** rather than being uploaded to storage first. That
+is two fewer round trips, two fewer things to fail, and the user's photograph is
+not left sitting in a bucket. The result comes back as a public URL, which the
+service **downloads and re-encodes** rather than passing through: the app
+already writes base64 straight to a file, and an unauthenticated link to a
+photograph of the user is better not leaving this process.
 
 ### How the photo is read
 
@@ -212,7 +323,27 @@ returned.
    because they happen to be the right grey. The rest of a category is only
    reached when nothing in it suits, so a sparse wardrobe still produces a
    complete outfit rather than a gap. Ten per category survive.
-2. **Score each core** (top, bottom, shoes) on three terms:
+
+   **`dresses` is the exception: it is shortlisted strictly.** A wardrobe with
+   no workout trousers still needs trousers, so `bottoms` falls back to whatever
+   exists. A one-piece garment is not a slot that must be filled — it is an
+   alternative shape — so when none suits the occasion the right answer is to
+   offer no dress core and let separates carry the outfit. Without that a
+   lehenga turns up at the gym purely for being the only thing in its category.
+   The fallback still applies when there are no separates at all: an unsuitable
+   dress beats no outfit.
+2. **Build cores in both shapes.** Either **top + bottom + shoes**, or
+   **dress + shoes** — where "dress" is any one-piece garment: a shalwar kameez,
+   a kurta, a sari, a lehenga, a western dress. Both shapes go into one ranking
+   and compete directly, which is the only honest comparison: a dress is not a
+   better top, it is a different answer to the same question.
+
+   Cores made of nothing but shoes are dropped. The separates shape produces one
+   whenever the wardrobe has shoes and no top or bottom, and while that was the
+   only core available it was harmless — but with a dress core beside it, a lone
+   pair of shoes can score inside the tolerance band and be recommended
+   *instead* of the dress.
+3. **Score each core** on three terms:
    - **colour harmony**, 45% — every piece against every other, not everything
      against the top
    - **season fit**, 35% — the same measurement `/match` returns
@@ -221,14 +352,24 @@ returned.
    wardrobe and occasion produce the same answer forever, and "Surprise me"
    static. Cores within two points of the leader share the choice, so variety
    only ever comes from outfits that are genuinely close.
-4. **Add outerwear and an accessory** only if they earn a place against the
+5. **Add outerwear and an accessory** only if they earn a place against the
    chosen core, and only from garments meant for the occasion. A coat that
    merely does not clash is not a reason to carry a coat, and a blazer has no
-   business over gym clothes however well it matches them.
+   business over gym clothes however well it matches them. Both layer over a
+   dress core exactly as they do over separates — a coat over a kameez is an
+   ordinary thing to wear.
 
 Scoring the core as a set is what fixes the old anchoring bug, where a shirt
 could suit both the trousers and the shoes while those two clashed with each
 other.
+
+**One quirk of comparing the two shapes**, worth knowing before defending the
+output. Harmony is the mean over every *pair* of pieces, and a dress-and-shoes
+core has one pair where a three-piece core has three. A single pair does not
+regress toward the middle the way three do, so dress cores land at the extremes
+more often — excellent when those two colours sing, poor when they clash. That
+is variance rather than bias; the averaging in `_score_set` already stops a
+shorter core from being rewarded merely for being short.
 
 **Harmony is not "closer is better".** Matching a garment to a palette wants
 distance minimised; two garments worn together do not. An outfit in one flat
@@ -244,8 +385,8 @@ near the app's 4-second timeout. The cache matters: without it the same call
 took 192ms, because the season score was being recomputed for every candidate.
 
 The response is a JSON array of the items that make up the outfit — a subset of
-what was sent in, in wearing order: top, bottom, shoes, then optionally
-outerwear and an accessory.
+what was sent in, in wearing order: either top, bottom, shoes or a one-piece
+garment and shoes, then optionally outerwear and an accessory.
 
 `POST /match` — scores one garment against the user's colour season:
 
@@ -299,8 +440,30 @@ Sharma, Wu & Dalal (2005), matching to within 1×10⁻⁴. That check is
 pytest
 ```
 
-From this folder, with the dev dependencies installed. 66 tests, well under a
-second — there is no reason not to run them before pushing.
+From this folder, with the dev dependencies installed. 156 tests in about three
+seconds — there is no reason not to run them before pushing.
+
+### Testing the try-on without spending anything
+
+Two of its refusals happen *before* `FAL_KEY` is read, so they exercise the
+whole HTTP path — request shape, aliases, guards, status mapping — with no key
+and no generation. With the service running:
+
+```bash
+curl -s -X POST localhost:8000/try-on -H "Content-Type: application/json" -d "{\"person\":\"ZmFrZQ==\",\"garments\":[{\"image\":\"ZmFrZQ==\",\"category\":\"shoes\"}]}"
+```
+
+That should be a **502** naming shoes. Change `shoes` to `tops` and it becomes a
+**503** asking for `FAL_KEY` — which means everything up to the model works.
+
+For a real generation, once `FAL_KEY` is in `.env`:
+
+```bash
+python tools/try_one.py
+```
+
+One generation, the sample photograph, a seeded garment, result written to
+`tryon-result.png`. `--dry-run` builds the request and sends nothing.
 
 `tests/test_color.py` is the one that matters. CIEDE2000 is long enough to get
 subtly wrong, and a subtly wrong version still returns plausible numbers: it
@@ -344,17 +507,29 @@ no log line means the app never reached you.
 ```
 main.py                  FastAPI app, CORS, the five endpoints
 vision.py                garment photo analysis — Gemini, then our own colour snapping
-tryon.py                 virtual try-on by image generation
+tryon.py                 virtual try-on — CatVTON, hosted on fal
+errors.py                the three failure types, and reading a status off any provider
 models.py                request/response shapes; camelCase aliases for the RN client
 rules.py                 outfit assembly — shortlist, score, choose
 color.py                 Lab conversion, CIEDE2000, palette scoring, garment harmony
 conftest.py              puts this folder on the import path for the suite
+tools/try_one.py         one real try-on generation, from the command line.
+                         The only thing here that spends money when you run it
+                         — which is why it is a tool and not a test
+tools/check_keys.py      are the keys in .env going to work? Free, and prints
+                         no part of a key, so it is safe to run on a shared
+                         screen or paste into a chat
+tools/import_wardrobe.py a folder of garment photographs -> data/myWardrobe.ts,
+                         named and categorised by /analyse. How your own clothes
+                         get into the app without typing twenty forms
 tests/test_color.py      the colour maths, against published reference data
 tests/test_match.py      the /match endpoint, over the real request shapes
 tests/test_recommend.py  the /recommend contract — shapes and ordering
 tests/test_rules.py      the scorer's judgement — season, occasion, and what it leaves off
 tests/test_vision.py     the checking around Gemini — no test here calls it
-tests/test_tryon.py      the guards around generation — no test here calls it either
+tests/test_tryon.py      the guards around CatVTON, and the request sent to it —
+                         no test here calls fal; the happy path is stubbed
+                         because a suite that spent money per run would be a trap
 requirements.txt         pinned to major versions
 requirements-dev.txt     pytest and httpx2, needed only to run the suite
 ```
@@ -370,17 +545,23 @@ proves the round-trip, the request and response shapes, and the app wiring,
 so swapping the model later is a change to `vision.py` alone. When OpenCV and
 YOLO land they replace `analyse_garment`; nothing else moves.
 
-**Virtual try-on is Gemini for now too**, and the honest description matters
-here more than anywhere else in the project. A purpose-built try-on model warps
-a specific garment onto a specific body and keeps both intact. `/try-on` asks a
-general image model to compose a new photograph from references, which is a
-different job with a different failure mode: the result usually looks
-*plausible* rather than *accurate*, and faces drift. Enough to demonstrate the
-idea; not enough to judge whether a coat fits. Say that out loud rather than
-letting it be heard as a fitting room.
+**Virtual try-on is done.** It was the other stand-in here and is not one any
+more: `/try-on` runs CatVTON, a model built for the job, rather than asking a
+general image model to compose a photograph. See "How the try-on works" above.
 
-Swapping in a real try-on model replaces `generate_try_on` — the endpoint, the
-request shape and the whole app flow stay as they are.
+That swap is also the evidence for the claim this section keeps making. The
+prediction was that replacing the model would mean rewriting `generate_try_on`
+and nothing else. In the event `tryon.py` was rewritten end to end, `errors.py`
+was split out of `vision.py` so try-on no longer imports the Gemini module —
+and `main.py`, `models.py`, the request shape and the app's whole flow were
+untouched. The app-side changes that did happen were about the model's *limits*
+(one garment, no shoes), not its identity.
+
+**The remaining gap is footwear and accessories.** No open try-on model handles
+them, so a complete head-to-toe look is not something this can render today. The
+app is explicit about it rather than quietly dropping the pieces — the picker
+only offers what can be worn. If you want to close it, that is a separate model
+and a separate dataset, not a change here.
 
 **Tuning, if you want it.** The weights, the shortlist size and the tolerance
 are constants at the top of `rules.py`, chosen by reasoning and then checked

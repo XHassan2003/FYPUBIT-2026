@@ -8,6 +8,7 @@ import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { GarmentThumb } from "@/components/GarmentThumb";
 import { Screen } from "@/components/Screen";
 import { colors, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
+import { canTryOn } from "@/data/mockWardrobe";
 import { useDisplayName } from "@/hooks/useDisplayName";
 import { useTryOn } from "@/store/useTryOn";
 import { useWardrobe } from "@/store/useWardrobe";
@@ -46,8 +47,10 @@ export default function HomeScreen() {
   const useSamplePhoto = useTryOn((state) => state.useSamplePhoto);
   const setItemId = useTryOn((state) => state.setItemId);
 
-  // Only pieces with a photograph can be generated from.
-  const wearable = useMemo(() => items.filter((piece) => piece.image), [items]);
+  // Only pieces the try-on model can wear — a photograph to work from, and a
+  // category it was trained on. Same rule as the flow itself, so the rail here
+  // never offers a piece that step two would drop.
+  const wearable = useMemo(() => items.filter(canTryOn), [items]);
   const rail = useMemo(() => wearable.slice(0, RAIL_LENGTH), [wearable]);
   const item = useMemo(() => wearable.find((piece) => piece.id === itemId), [wearable, itemId]);
 

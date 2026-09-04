@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Tabs } from "expo-router";
 import { useState } from "react";
 import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from "react-native";
@@ -8,6 +7,18 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, inkAlpha, paperAlpha, shadow, type } from "@/constants/theme";
 
 type IconName = keyof typeof Ionicons.glyphMap;
+
+/**
+ * The props expo-router hands a custom tab bar.
+ *
+ * Read off `Tabs` itself rather than imported. SDK 56 detached expo-router from
+ * react-navigation, so `BottomTabBarProps` from `@react-navigation/bottom-tabs`
+ * is now a *different* type that no longer matches what arrives here — and the
+ * one that does match lives under expo-router's build directory, which is not a
+ * path to depend on. Deriving it from the public prop keeps this correct
+ * through the next move.
+ */
+type TabBarProps = Parameters<NonNullable<React.ComponentProps<typeof Tabs>["tabBar"]>>[0];
 
 /**
  * Virtual try-on sits in the middle, raised out of the bar, because it is what
@@ -29,7 +40,7 @@ const CENTRE_WIDTH = 92;
 /** Indicator inset from each edge of its tab, matching the web's inset-x-4. */
 const INDICATOR_INSET = 16;
 
-function AtelierTabBar({ state, navigation }: BottomTabBarProps) {
+function AtelierTabBar({ state, navigation }: TabBarProps) {
   const insets = useSafeAreaInsets();
 
   // The tabs are no longer equal-width — the raised button takes a fixed slot

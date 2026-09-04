@@ -28,6 +28,7 @@ from typing import NoReturn
 from google import genai
 
 from color import nearest_palette_color
+from errors import VisionFailed, VisionRateLimited, VisionUnavailable, status_of
 
 # Fast and cheap, and this is a single image with a small structured answer.
 MODEL = "gemini-3.7-flash"
@@ -53,43 +54,27 @@ background, the hanger, the model's other clothes, and any packaging.
   suit more than one. Do not include an occasion just because it is possible."""
 
 
-class VisionUnavailable(RuntimeError):
-    """No API key configured. A setup problem, not a runtime failure."""
-
-
-class VisionFailed(RuntimeError):
-    """The model was reached but did not return something usable."""
-
-
-class VisionRateLimited(RuntimeError):
-    """Out of quota, or asking too fast.
-
-    Worth its own type because it is neither a bug nor a broken photo: the
-    request was fine and the same request will work later. Telling someone to
-    "try a different photo" when the real answer is "wait a minute" sends them
-    off fixing something that was never wrong.
-
-    The free tier is small enough that a demo can reach it, and the SDK retries
-    internally with backoff before giving up — which is why a rate-limited call
-    can take a minute or more to fail rather than failing at once.
-    """
+# The three exception types now live in errors.py, because /try-on raises them
+# too and no longer has any reason to import this module — it does not call
+# Gemini. Re-exported here so `from vision import VisionFailed` keeps working.
+#
+# Worth knowing about the rate limit specifically: Gemini's free tier is small
+# enough that a demo can reach it, and the SDK retries internally with backoff
+# before giving up, which is why a rate-limited call can take a minute or more
+# to fail rather than failing at once.
 
 
 def _raise_for(err: Exception) -> NoReturn:
-    """Turn an SDK exception into one of ours, by HTTP status.
+    """Turn a Gemini SDK exception into one of ours, by HTTP status.
 
-    Deliberately duck-typed rather than matched on class. The Interactions API
-    raises from `google.genai._gaos.lib.compat_errors`, whose exceptions do not
-    inherit from the `google.genai.errors.APIError` you would reasonably import
-    — there are two unrelated classes of that name, and `isinstance` against
-    the public one is simply False. That mismatch is what made a quota error
-    reach the app as "could not read it" instead of "wait a moment".
-
-    The two hierarchies also disagree on where the status lives: the newer one
-    exposes `status_code`, the older `code`. Read whichever is there, and stay
-    out of the private module.
+    `errors.status_of` does the reading, and its docstring explains why this is
+    duck-typed rather than matched on class — the short version is that the
+    Interactions API's exceptions do not inherit from the `APIError` you would
+    reasonably import, so `isinstance` against it is simply False. Getting that
+    wrong once sent every quota error through as a generic failure, and the app
+    then told the user their photograph was the problem.
     """
-    status = getattr(err, "status_code", None) or getattr(err, "code", None)
+    status = status_of(err)
 
     if status == 429:
         raise VisionRateLimited(

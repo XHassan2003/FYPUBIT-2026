@@ -4,5 +4,11 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# Holds GEMINI_API_KEY. Secret and billable — never commit it.
+# Holds GEMINI_API_KEY and FAL_KEY. Both secret, both billable — never commit.
+# .env.example is deliberately NOT ignored: it is the template, and its values
+# must stay empty. Putting a real key there is how one gets committed.
 .env
+.env.local
+
+# Output of tools/try_one.py.
+tryon-result.*

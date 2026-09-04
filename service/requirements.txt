@@ -4,5 +4,11 @@ pydantic>=2.7,<3.0
 # Garment photo analysis. 2.3+ is what supports Pydantic/JSON schemas for
 # structured output.
 google-genai>=2.3,<3.0
-# Reads service/.env so GEMINI_API_KEY does not have to be exported by hand.
+# Virtual try-on: CatVTON, hosted (see tryon.py). Handles fal's request queue —
+# submit, poll, collect — so this service does not have to.
+fal-client>=0.5,<1.0
+# Fetching the generated image back off fal's CDN so /try-on can return bytes
+# rather than a public link to a photograph of the user.
+httpx>=0.27,<1.0
+# Reads service/.env so the API keys do not have to be exported by hand.
 python-dotenv>=1.0,<2.0

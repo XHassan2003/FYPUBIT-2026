@@ -14,7 +14,7 @@ were broken.
 import pytest
 
 from models import SeasonPayload, WardrobeItem
-from rules import build_outfit
+from rules import _Scores, _candidate_cores, build_outfit
 
 RUNS = 25
 
@@ -126,6 +126,128 @@ def test_an_extra_is_worn_when_it_does_suit_the_occasion():
     outfits = ids_over_runs(wardrobe, "workout", season=WINTER)
 
     assert all("hoodie" in outfit for outfit in outfits)
+
+
+# --- one-piece garments ----------------------------------------------------
+#
+# A shalwar kameez, a kurta, a sari, a lehenga, a dress. These are not a third
+# slot in the outfit — they *replace* the top and the bottom — so the thing
+# actually worth testing is that the scorer treats them as an alternative shape
+# rather than an extra piece.
+
+DRESS_ONLY_WARDROBE = [
+    garment("kameez", "dresses", "#1C1B19", "black", ["formal"]),
+    garment("heels", "shoes", "#2B2420", "black", ["formal"]),
+]
+
+
+def test_a_one_piece_garment_can_be_the_whole_outfit():
+    outfits = ids_over_runs(DRESS_ONLY_WARDROBE, "formal", season=WINTER)
+    assert all(outfit == {"kameez", "heels"} for outfit in outfits)
+
+
+def test_a_dress_is_never_worn_with_a_top_or_a_bottom():
+    """The invariant that makes this a shape rather than a slot.
+
+    A wardrobe with everything in it: whatever the scorer picks, an outfit
+    containing a one-piece garment must not also contain trousers, and an outfit
+    built from a top and a bottom must not also contain a dress. Getting this
+    wrong produces a plausible-looking list of items that describes an
+    impossible outfit — nothing would raise, it would just be nonsense.
+    """
+    wardrobe = [
+        garment("kameez", "dresses", "#1C1B19", "black", ["formal"]),
+        garment("sari", "dresses", "#6B2545", "plum", ["formal"]),
+        garment("blouse", "tops", "#FFFFFF", "white", ["formal"]),
+        garment("trousers", "bottoms", "#3A3A3A", "charcoal", ["formal"]),
+        garment("heels", "shoes", "#2B2420", "black", ["formal"]),
+    ]
+
+    for outfit in ids_over_runs(wardrobe, "formal", season=WINTER):
+        wears_a_dress = bool(outfit & {"kameez", "sari"})
+        wears_separates = bool(outfit & {"blouse", "trousers"})
+        assert not (wears_a_dress and wears_separates), outfit
+        # And never two dresses at once, which the shape makes impossible but
+        # which a careless rewrite of _candidate_cores would allow.
+        assert len(outfit & {"kameez", "sari"}) <= 1, outfit
+
+
+def test_a_dress_still_competes_rather_than_winning_by_default():
+    """A dress badly out of season should lose to separates that suit it.
+
+    Otherwise "handles dresses" would mean "always picks the dress", which is
+    not the same thing and would be worse than not supporting them.
+    """
+    wardrobe = [
+        # Camel: squarely Warm Autumn, and about as far from True Winter as the
+        # palette goes.
+        garment("camel-kameez", "dresses", "#B08968", "camel", ["work"]),
+        garment("white-shirt", "tops", "#FFFFFF", "white", ["work"]),
+        garment("charcoal-trousers", "bottoms", "#3A3A3A", "charcoal", ["work"]),
+        garment("black-loafers", "shoes", "#2B2420", "black", ["work"]),
+    ]
+
+    winter = ids_over_runs(wardrobe, "work", season=WINTER)
+    assert all("camel-kameez" not in outfit for outfit in winter)
+
+    # ...and the same wardrobe on the season it does suit picks it up again, so
+    # the assertion above is the season talking and not a blanket exclusion.
+    autumn = ids_over_runs(wardrobe, "work", season=AUTUMN)
+    assert any("camel-kameez" in outfit for outfit in autumn)
+
+
+def test_outerwear_and_accessories_still_layer_over_a_dress():
+    """A coat over a kameez is an ordinary thing to wear."""
+    wardrobe = DRESS_ONLY_WARDROBE + [
+        garment("coat", "outerwear", "#3A3A3A", "charcoal", ["formal"]),
+        garment("earrings", "accessories", "#6E6A62", "grey", ["formal"]),
+    ]
+    outfits = ids_over_runs(wardrobe, "formal", season=WINTER)
+
+    assert all("kameez" in outfit for outfit in outfits)
+    assert all("coat" in outfit for outfit in outfits)
+
+
+def test_shoes_alone_are_not_offered_as_an_outfit():
+    """A latent bug the dress shape exposed, worth keeping shut.
+
+    The separates shape produces a shoes-only core whenever the wardrobe has
+    shoes but no top and no bottom. That was harmless while it was the only core
+    on offer — but once a dress core competes beside it, a lone pair of shoes
+    can land inside SHORTLIST_TOLERANCE and get chosen *instead of the dress*,
+    and the user is recommended footwear and nothing else.
+    """
+    cores = _candidate_cores(DRESS_ONLY_WARDROBE, "formal", _Scores(None))
+    assert [[piece.id for piece in core] for core in cores] == [["kameez", "heels"]]
+
+
+def test_a_wardrobe_of_nothing_but_shoes_still_returns_the_shoes():
+    """The other side of the rule above: dropping bare-shoe cores must not turn
+    a thin wardrobe into an empty recommendation. Something beats nothing."""
+    only_shoes = [garment("heels", "shoes", "#2B2420", "black", ["formal"])]
+    assert ids_over_runs(only_shoes, "formal") == [{"heels"}] * RUNS
+
+
+def test_an_unsuitable_dress_is_worn_when_it_is_all_there_is():
+    """Dresses are shortlisted strictly, so a formal one is normally kept out of
+    a workout. That strictness must not leave someone with nothing at all when
+    the wardrobe holds no separates to fall back on."""
+    wardrobe = [
+        garment("lehenga", "dresses", "#1C1B19", "black", ["formal"]),
+        garment("trainers", "shoes", "#6E6A62", "grey", ["workout"]),
+    ]
+    assert all("lehenga" in outfit for outfit in ids_over_runs(wardrobe, "workout"))
+
+
+def test_a_dress_out_of_occasion_is_not_forced_on():
+    """The occasion filter applies to the dress shape exactly as it does to
+    separates — a lehenga is not gym wear however well it matches."""
+    wardrobe = GYM_WARDROBE + [
+        garment("lehenga", "dresses", "#1C1B19", "black", ["formal"])
+    ]
+    outfits = ids_over_runs(wardrobe, "workout", season=WINTER)
+
+    assert all("lehenga" not in outfit for outfit in outfits)
 
 
 def test_pieces_are_compared_to_each_other_not_just_the_top():

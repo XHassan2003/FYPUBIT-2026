@@ -14,7 +14,7 @@ import {
   TryOnHeader,
 } from "@/components/TryOnSteps";
 import { colors, spacing } from "@/constants/theme";
-import { Category, Occasion } from "@/data/mockWardrobe";
+import { canTryOn, Category, Occasion } from "@/data/mockWardrobe";
 import { useTryOn } from "@/store/useTryOn";
 import { useWardrobe } from "@/store/useWardrobe";
 
@@ -39,6 +39,16 @@ import { useWardrobe } from "@/store/useWardrobe";
  */
 const STAGE_MS = 7000;
 
+/**
+ * How many ticks before the wait is admitted to be a long one — about 45
+ * seconds. A clean photograph comes back in roughly ten, so by here the model is
+ * labouring over something it cannot read easily, and saying so beats a frozen
+ * line of copy. The service logs the same judgement at 30s (SLOW_GENERATION_S);
+ * this one is later because a user watching a spinner needs more patience than
+ * a log file does.
+ */
+const SLOW_AFTER_TICKS = 7;
+
 const TOAST_MS = 2400;
 
 export default function TryOnScreen() {
@@ -49,6 +59,7 @@ export default function TryOnScreen() {
 
   // Shared with Home, so a photo or a piece chosen there is already chosen here.
   const photo = useTryOn((state) => state.photo);
+  const photoConcern = useTryOn((state) => state.photoConcern);
   const itemId = useTryOn((state) => state.itemId);
   const result = useTryOn((state) => state.result);
   const error = useTryOn((state) => state.error);
@@ -76,9 +87,11 @@ export default function TryOnScreen() {
   const [saved, setSaved] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  // Only pieces with a photograph: the generator works from images, and a
-  // silhouette tells it nothing about the garment.
-  const wearable = useMemo(() => wardrobe.filter((piece) => piece.image), [wardrobe]);
+  // Only pieces the model can actually wear: it works from images, so a
+  // silhouette tells it nothing, and it fits tops, bottoms and outerwear only.
+  // See `canTryOn` — shoes and accessories are outside what CatVTON was
+  // trained on, and offering them here would sell a refusal as a feature.
+  const wearable = useMemo(() => wardrobe.filter(canTryOn), [wardrobe]);
   const filtered = useMemo(
     () => (filter === "all" ? wearable : wearable.filter((piece) => piece.category === filter)),
     [wearable, filter]
@@ -88,7 +101,10 @@ export default function TryOnScreen() {
   useEffect(() => {
     if (step !== "generating") return;
     setStage(0);
-    const id = setInterval(() => setStage((prev) => Math.min(prev + 1, 3)), STAGE_MS);
+    // No longer capped at the last stage: the count keeps rising so it can also
+    // measure how long the wait has run. GeneratingStep clamps it back down for
+    // the copy — see `slow` below.
+    const id = setInterval(() => setStage((prev) => prev + 1), STAGE_MS);
     return () => clearInterval(id);
   }, [step]);
 
@@ -172,7 +188,13 @@ export default function TryOnScreen() {
       {error ? <TryOnError message={error} onDismiss={clearError} /> : null}
 
       {step === "generating" ? (
-        <GeneratingStep photo={photo} item={item} stage={stage} onCancel={() => setStep("confirm")} />
+        <GeneratingStep
+          photo={photo}
+          item={item}
+          stage={stage}
+          slow={stage >= SLOW_AFTER_TICKS}
+          onCancel={() => setStep("confirm")}
+        />
       ) : (
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {step === "photo" ? (
@@ -200,8 +222,10 @@ export default function TryOnScreen() {
             <ConfirmStep
               photo={photo}
               item={item}
+              concern={photoConcern}
               onGenerate={run}
               onChangePiece={() => setStep("item")}
+              onChangePhoto={onChangePhoto}
             />
           ) : null}
         </ScrollView>
