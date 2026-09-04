@@ -12,7 +12,19 @@ import {
   colorPairings,
 } from "@/data/mockWardrobe";
 import { COLOR_SEASONS, ColorSeason, SeasonId } from "@/data/colorSeasons";
+import { myWardrobe } from "@/data/myWardrobe";
 import { SWATCHES } from "@/data/swatches";
+
+/**
+ * What a fresh install starts with, and what `merge` reconciles a saved
+ * wardrobe against on every launch.
+ *
+ * Two halves: the seeded demo pieces, and whatever
+ * `service/tools/import_wardrobe.py` generated from your own photographs. The
+ * user's own clothes come last so that if an id ever collided, theirs is the
+ * one that survives the union below.
+ */
+const SEED_WARDROBE: WardrobeItem[] = [...mockWardrobe, ...myWardrobe];
 
 export interface Outfit {
   id: string;
@@ -359,13 +371,14 @@ async function fetchAnalysis(imageBase64: string, mimeType: string): Promise<Gar
 }
 
 /**
- * Ask the service to generate the wearer in their chosen outfit.
+ * Ask the service to fit the chosen garment onto the wearer's photograph.
  *
  * The same three failures as the analyser, told apart for the same reason: fix
- * the setup, wait, or give up. This one adds a fourth — the model declining to
- * produce an image at all — which the service reports as a 502 with a message
- * worth showing verbatim, because it usually says what to change about the
- * photo.
+ * the setup, wait, or give up. This one adds a fourth — the model refusing the
+ * piece, because it fits tops, bottoms and outerwear and nothing else — which
+ * the service reports as a 502 whose message names the garment. That is worth
+ * showing verbatim: "shoes cannot be tried on" is something the user can act
+ * on, and "try-on failed" is not.
  */
 async function fetchTryOn(
   personBase64: string,
@@ -387,16 +400,25 @@ async function fetchTryOn(
 
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
-      if (response.status === 503) {
-        throw new Error("Try-on is not set up yet — the service needs a Gemini API key.");
-      }
+      const parsed = detail.match(/"detail"\s*:\s*"([^"]+)"/)?.[1];
+
       if (response.status === 429) {
         throw new Error("The studio is busy right now. Wait a moment and try again.");
       }
-      // The service's own words: for a refused or unusable photo they say
-      // what to change, which is more use than anything generic.
-      const parsed = detail.match(/"detail"\s*:\s*"([^"]+)"/);
-      throw new Error(parsed?.[1] ?? `Try-on responded ${response.status}`);
+
+      // The service's own words wherever it gave any. For a refused piece it
+      // names the garment; for a 503 it distinguishes a missing key from a fal
+      // account with no balance left — and those need opposite fixes, so
+      // flattening both to "needs an API key" would send someone re-copying a
+      // key that was always fine. The generic lines below are only a fallback
+      // for a response that carried no detail at all.
+      if (parsed) throw new Error(parsed);
+
+      throw new Error(
+        response.status === 503
+          ? "Try-on is not set up yet — the service needs a fal API key."
+          : `Try-on responded ${response.status}`
+      );
     }
 
     const data = await response.json();
@@ -433,7 +455,7 @@ function localMatch(
 export const useWardrobe = create<WardrobeState>()(
   persist<WardrobeState, [], [], PersistedWardrobe>(
     (set, get) => ({
-      items: mockWardrobe,
+      items: SEED_WARDROBE,
       outfits: [],
       profile: {
         name: "Hassan",
@@ -573,8 +595,41 @@ export const useWardrobe = create<WardrobeState>()(
       storage: createJSONStorage(() => AsyncStorage),
       // Bump this and add a `migrate` when the persisted shape changes, so an
       // installed app doesn't rehydrate into a state its code no longer expects.
-      version: 1,
+      version: 2,
       partialize: (state) => ({ items: state.items, outfits: state.outfits, profile: state.profile }),
+      /**
+       * Reconcile the saved wardrobe with the seed on every launch.
+       *
+       * `items` is persisted, so a phone that has run the app before rehydrates
+       * its stored array and any newly seeded piece never appears — which on a
+       * demo device looks exactly like the code not having been deployed.
+       *
+       * This runs in `merge` rather than `migrate` deliberately. A migration
+       * fires once, on a version bump, which would mean editing this file every
+       * time `myWardrobe.ts` is regenerated from a fresh batch of photographs.
+       * Merging on every rehydrate means: run the importer, reload, the clothes
+       * are there. It is a set construction and a filter over a few dozen items,
+       * so doing it per launch costs nothing.
+       *
+       * Union by id — anything the user added on the device survives untouched,
+       * and nothing is duplicated.
+       *
+       * The trade-off, stated plainly: a seed piece deliberately deleted comes
+       * back on the next launch. Reappearing clothes are a smaller surprise than
+       * a wardrobe that silently refuses to update, but if that ever stops being
+       * true the fix is to record deletions, not to drop this merge.
+       */
+      merge: (persisted, current) => {
+        const saved = persisted as Partial<PersistedWardrobe> | undefined;
+        const items = saved?.items ?? [];
+        const owned = new Set(items.map((item) => item.id));
+
+        return {
+          ...current,
+          ...saved,
+          items: [...items, ...SEED_WARDROBE.filter((seed) => !owned.has(seed.id))],
+        };
+      },
     }
   )
 );

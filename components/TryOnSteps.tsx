@@ -14,7 +14,8 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { colors, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
-import { CATEGORIES, Category, WardrobeItem } from "@/data/mockWardrobe";
+import { Category, TRY_ON_CATEGORIES, WardrobeItem } from "@/data/mockWardrobe";
+import type { PhotoConcern } from "@/store/useTryOn";
 import { Button } from "./Button";
 import { Chip } from "./Chip";
 import { EmptyState } from "./EmptyState";
@@ -34,9 +35,25 @@ export type Step = "photo" | "item" | "confirm" | "generating" | "result";
  *  far through the *choosing* you are, and choosing ends at confirm. */
 const STEP_INDEX: Record<Step, number> = { photo: 0, item: 1, confirm: 2, generating: 2, result: 2 };
 
+/**
+ * Not styling advice — these are the model's requirements, in plain words.
+ *
+ * CatVTON was trained on VITON-HD and DressCode, which are catalogue shots: one
+ * person, head to foot, front on, plain background, in ordinary close-fitting
+ * clothes. A photo outside that distribution gives the human parser a poor mask,
+ * and a poor mask is what turns a shirt into a shapeless smear. It is not a
+ * subtle effect — the same garment on a good photo and a bad one produced a
+ * clean result in 11 seconds and a ruined one in 64.
+ *
+ * Ordered by how much each actually changes the outcome, so someone who reads
+ * only the first two still gets most of the benefit. The last is ordinary photo
+ * advice rather than a hard requirement, which is why it is last.
+ */
 const TIPS = [
   "Stand in a full-length frame, head to feet.",
+  "Face the camera, arms relaxed and away from your body.",
   "Keep the background plain — a bare wall reads best.",
+  "Wear something close-fitting. A bulky coat has to be painted over.",
   "Even daylight. Avoid harsh shadows across the body.",
 ];
 
@@ -112,8 +129,13 @@ export function PhotoStep({ photo, onPick, onUseSample, onContinue }: PhotoStepP
       <Text style={[type.eyebrow, styles.ash]}>Step one</Text>
       <Text style={[type.h1, styles.stepTitle]}>Your</Text>
       <Text style={[type.heroItalic, styles.stepTitleItalic]}>photo.</Text>
+      {/* "The truest fit" is what this used to promise, and it was not true —
+          colour and silhouette carry over, collars and buttons do not. What the
+          result really turns on is the photograph, so point at the notes
+          instead of overselling the outcome. */}
       <Text style={[type.body, styles.stepBlurb]}>
-        Take a photo or choose one from your gallery. A full-length standing shot gives the truest fit.
+        Take a photo or choose one from your gallery. The result depends on the photograph more than
+        anything else — the notes below are worth a moment.
       </Text>
 
       <View style={[styles.photoFrame, photo ? styles.photoFrameFilled : null]}>
@@ -203,7 +225,8 @@ export function ItemStep({
         <Text style={[type.h1, styles.stepTitle]}>Choose your</Text>
         <Text style={[type.heroItalic, styles.stepTitleItalic]}>look.</Text>
         <Text style={[type.body, styles.stepBlurb]}>
-          Everything here is already yours. Pick the piece you want to see on you.
+          Everything here is already yours. Pick the piece you want to see on you —
+          one at a time, and tops, bottoms or outerwear.
         </Text>
       </View>
 
@@ -214,7 +237,10 @@ export function ItemStep({
         style={styles.filterScroll}
       >
         <Chip label="All" selected={filter === "all"} onPress={() => onFilter("all")} />
-        {CATEGORIES.map((category) => (
+        {/* Not CATEGORIES: shoes and accessories are outside what the try-on
+            model was trained on, so a chip for them would only ever lead to an
+            empty list. See TRY_ON_CATEGORIES. */}
+        {TRY_ON_CATEGORIES.map((category) => (
           <Chip
             key={category}
             label={category}
@@ -227,7 +253,7 @@ export function ItemStep({
       {items.length === 0 ? (
         <EmptyState
           title={`No ${filter === "all" ? "pieces" : filter} to try`}
-          message="Only pieces with a photograph can be tried on. Add one and it appears here."
+          message="Try-on needs a photograph to work from, and fits tops, bottoms and outerwear. Add a piece and it appears here."
           actionLabel="Add a piece"
           onAction={onAddPiece}
           style={styles.empty}
@@ -307,16 +333,44 @@ function ItemCard({
 interface ConfirmStepProps {
   photo: string;
   item: WardrobeItem;
+  /** Something detectably wrong with the photo — see `assessPhoto`. */
+  concern?: PhotoConcern;
   onGenerate: () => void;
   onChangePiece: () => void;
+  onChangePhoto: () => void;
 }
 
-export function ConfirmStep({ photo, item, onGenerate, onChangePiece }: ConfirmStepProps) {
+export function ConfirmStep({
+  photo,
+  item,
+  concern,
+  onGenerate,
+  onChangePiece,
+  onChangePhoto,
+}: ConfirmStepProps) {
   return (
     <Animated.View entering={FadeIn.duration(320)} style={styles.step}>
       <Text style={[type.eyebrow, styles.ash]}>Step three</Text>
       <Text style={[type.h1, styles.stepTitle]}>Your</Text>
       <Text style={[type.heroItalic, styles.stepTitleItalic]}>look.</Text>
+
+      {/* Deliberately a warning and not a block. The check reads width and
+          height only, so it is confident about a landscape snapshot and blind
+          to everything else — refusing to generate on that basis would stop
+          people using photos that would have been fine. Gold rather than
+          `ember`, which is the error colour and would overstate this. */}
+      {concern ? (
+        <Animated.View entering={FadeInDown.duration(320)} style={styles.concern}>
+          <Ionicons name="alert-circle-outline" size={15} color={colors.gold} />
+          <View style={styles.concernBody}>
+            <Text style={styles.concernHeadline}>{concern.headline}</Text>
+            <Text style={[type.small, styles.concernAdvice]}>{concern.advice}</Text>
+            <Pressable onPress={onChangePhoto} hitSlop={6}>
+              <Text style={styles.concernAction}>Choose another photo</Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      ) : null}
 
       <View style={styles.pair}>
         <View style={styles.pairYou}>
@@ -367,11 +421,14 @@ export function GeneratingStep({
   photo,
   item,
   stage,
+  slow,
   onCancel,
 }: {
   photo?: string;
   item?: WardrobeItem;
   stage: number;
+  /** The wait has run past what a straightforward photo takes. */
+  slow?: boolean;
   onCancel: () => void;
 }) {
   return (
@@ -404,6 +461,19 @@ export function GeneratingStep({
             {STAGES[Math.min(stage, STAGES.length - 1)]}
           </Animated.Text>
         </View>
+
+        {/* The copy above runs out long before a difficult photo does, and a
+            frozen line reads as a hung app. This says the quiet part instead:
+            the wait itself is the signal, because the model takes far longer on
+            a photograph it cannot read cleanly. Better to admit that at 45
+            seconds than to let someone stare at "Matching the light" for four
+            minutes and then hand them a failure. */}
+        {slow ? (
+          <Animated.Text entering={FadeIn.duration(400)} style={styles.generatingSlow}>
+            Still working. This photo is taking longer than most — a full-length,
+            front-on shot on a plain background is usually much quicker.
+          </Animated.Text>
+        ) : null}
 
         <Pressable onPress={onCancel} style={styles.cancel} hitSlop={8}>
           <Text style={styles.cancelLabel}>Cancel</Text>
@@ -948,4 +1018,44 @@ const styles = StyleSheet.create({
     borderColor: inkAlpha.a10,
   },
   errorMessage: { flex: 1, color: colors.ink },
+
+  // The photo warning on step three. Shaped like `error` above so the two read
+  // as the same kind of object, but on paper rather than sand and keyed to gold
+  // rather than ember — this is advice, not a failure, and the colours are what
+  // carry that distinction before the words are read.
+  concern: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.md,
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: inkAlpha.a10,
+    borderLeftWidth: 2,
+    borderLeftColor: colors.gold,
+  },
+  concernBody: { flex: 1, gap: spacing.xs },
+  concernHeadline: { fontFamily: type.h3.fontFamily, fontSize: 14, color: colors.ink },
+  concernAdvice: { color: colors.smoke },
+  generatingSlow: {
+    marginTop: spacing.lg,
+    maxWidth: 300,
+    textAlign: "center",
+    alignSelf: "center",
+    fontFamily: type.body.fontFamily,
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.smoke,
+  },
+
+  concernAction: {
+    marginTop: spacing.xs,
+    fontFamily: type.caps.fontFamily,
+    fontSize: type.caps.fontSize,
+    letterSpacing: type.caps.letterSpacing,
+    textTransform: "uppercase",
+    color: colors.ink,
+    textDecorationLine: "underline",
+  },
 });

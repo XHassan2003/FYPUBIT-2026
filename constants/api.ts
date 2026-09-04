@@ -53,8 +53,19 @@ export const API_TIMEOUT_MS = 4000;
 // read a photograph — so the honest choice is to wait, then say it failed.
 export const ANALYSIS_TIMEOUT_MS = 25000;
 
-// Virtual try-on gets longer still. It generates a photograph rather than
-// reading one, from half a dozen reference images, and that is tens of seconds
-// of work on a good day. The screen says what it is doing throughout, so a
+// Virtual try-on gets longer still. It runs a diffusion model rather than
+// reading an image, and the request is queued before it is run, so tens of
+// seconds is the normal case. The screen says what it is doing throughout, so a
 // long wait is a wait rather than a hang.
-export const TRY_ON_TIMEOUT_MS = 120000;
+//
+// A ceiling, not a target, and deliberately above the service's own budget
+// (CLIENT_TIMEOUT_S in service/tryon.py, currently 240s) so the service gives up
+// first and gets to explain why. If this were the shorter of the two the phone
+// would abort a generation that was still running, and the user would be told
+// nothing — **the two numbers have to be changed together**, and this one must
+// stay the larger.
+//
+// Long, and deliberately so. Giving up does not cancel the job: it keeps running
+// on fal and is billed either way, so a short ceiling spends the money and
+// discards the result. Waiting is strictly better than aborting.
+export const TRY_ON_TIMEOUT_MS = 270000;

@@ -13,6 +13,10 @@ interface GarmentSilhouetteProps {
 const paths: Record<Category, string> = {
   tops: "M24 8 L16 12 L6 18 L11 28 L17 25 L17 56 L47 56 L47 25 L53 28 L58 18 L48 12 L40 8 C38 14 26 14 24 8 Z",
   bottoms: "M18 8 L46 8 L48 24 L45 58 L35 58 L32 30 L29 58 L19 58 L16 24 Z",
+  // One piece, shoulder to hem, flaring out below the waist — a kameez or a
+  // kurta reads the same as a dress at this size, and the flare is what
+  // separates it from `tops` in a grid where both are 20px wide.
+  dresses: "M24 8 L14 13 L8 20 L13 27 L18 24 L15 58 L49 58 L46 24 L51 27 L56 20 L50 13 L40 8 C38 14 26 14 24 8 Z",
   outerwear:
     "M24 8 L14 13 L6 19 L11 30 L16 27 L16 57 L32 57 L32 14 L32 57 L48 57 L48 27 L53 30 L58 19 L50 13 L40 8 L32 18 Z",
   shoes: "M10 26 L22 26 L27 34 C31 40 42 41 51 43 C56 44 58 47 58 50 L58 54 L10 54 Z",
