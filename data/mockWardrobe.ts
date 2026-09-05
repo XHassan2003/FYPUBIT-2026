@@ -1,7 +1,7 @@
 /**
  * `dresses` covers anything worn as one piece from shoulder to hem — a shalwar
  * kameez, a kurta, a sari, a lehenga, a western dress. It exists because the
- * try-on model needs it: CatVTON fits one masked region, and that region is
+ * try-on model needs it: it fits one region per pass, and that region is
  * either the upper body, the lower body, or the whole torso at once. Filing a
  * kameez under `tops` would fit the upper half and leave the wearer's own
  * trousers showing through the bottom of it.
@@ -34,18 +34,21 @@ export const OCCASIONS: Occasion[] = ["work", "casual", "date night", "workout",
 /**
  * The categories virtual try-on can actually wear.
  *
- * CatVTON is trained on VITON-HD and DressCode, which are upper body, lower
- * body and dresses. Shoes, bags and jewellery are not in its label space at
- * all — it has no notion of them, so there is no prompt or setting that would
- * make it try. `CLOTH_TYPES` in service/tryon.py is the same list on the other
- * side, and refuses anything missing from it before a generation is paid for.
+ * The try-on model knows three: tops, bottoms and one-pieces. Shoes, bags and
+ * jewellery are not categories it has, so there is no prompt or setting that
+ * would make it try. `FASHN_CATEGORIES` in service/tryon.py is the same list on
+ * the other side, and refuses anything missing from it before a generation is
+ * paid for.
  *
  * Kept here rather than only in the service so the picker never offers a piece
  * the model will refuse. A wardrobe is still a wardrobe — `CATEGORIES` is
  * unchanged, and shoes and accessories go on being stored, styled and matched
  * everywhere else in the app.
  */
-export const TRY_ON_CATEGORIES: Category[] = ["tops", "bottoms", "dresses", "outerwear"];
+/** The subset of `Category` that try-on can wear. */
+export type TryOnCategory = "tops" | "bottoms" | "dresses" | "outerwear";
+
+export const TRY_ON_CATEGORIES: TryOnCategory[] = ["tops", "bottoms", "dresses", "outerwear"];
 
 /**
  * Whether this piece can be put on a photograph of someone.
@@ -54,7 +57,61 @@ export const TRY_ON_CATEGORIES: Category[] = ["tops", "bottoms", "dresses", "out
  * silhouette tells it nothing, and it only fits the categories above.
  */
 export function canTryOn(item: WardrobeItem): boolean {
-  return Boolean(item.image) && TRY_ON_CATEGORIES.includes(item.category);
+  // The cast is the narrowing this function performs: `includes` on a
+  // TryOnCategory[] will not accept a plain Category, and the answer is the
+  // whole point of asking.
+  return Boolean(item.image) && TRY_ON_CATEGORIES.includes(item.category as TryOnCategory);
+}
+
+/** Which part of the body a garment occupies. */
+export type BodySlot = "upper" | "lower" | "whole";
+
+/**
+ * The rule for what can be worn together, mirroring `BODY_SLOTS` in
+ * service/tryon.py.
+ *
+ * `tops` and `outerwear` share a slot on purpose. The try-on model has one
+ * upper-body category, so a shirt and a coat are not two layers to it — the
+ * second pass would simply paint over the first, and the generation spent on
+ * the shirt would vanish.
+ */
+export const BODY_SLOTS: Record<TryOnCategory, BodySlot> = {
+  tops: "upper",
+  outerwear: "upper",
+  bottoms: "lower",
+  dresses: "whole",
+};
+
+/** Undefined for a piece try-on cannot wear at all — shoes, accessories. */
+export function bodySlot(item: WardrobeItem): BodySlot | undefined {
+  return BODY_SLOTS[item.category as TryOnCategory];
+}
+
+/**
+ * Add a piece to a selection, and take out whatever it displaces.
+ *
+ * The whole outfit rule in one place, because the flow and the store both need
+ * it and two copies would drift:
+ *
+ * - tapping a selected piece removes it
+ * - a piece replaces anything already filling its part of the body
+ * - a one-piece is worn alone, so it clears everything and everything clears it
+ *
+ * Returns a new array; never mutates.
+ */
+export function toggleInOutfit(selected: WardrobeItem[], item: WardrobeItem): WardrobeItem[] {
+  if (selected.some((piece) => piece.id === item.id)) {
+    return selected.filter((piece) => piece.id !== item.id);
+  }
+
+  const slot = bodySlot(item);
+  if (slot === undefined) return selected;
+  if (slot === "whole") return [item];
+
+  return [
+    ...selected.filter((piece) => bodySlot(piece) !== slot && bodySlot(piece) !== "whole"),
+    item,
+  ];
 }
 
 // Unsplash CDN photos (Unsplash License: free for commercial use, no
@@ -65,12 +122,37 @@ function photo(id: string) {
   return `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=800&q=80`;
 }
 
+/**
+ * Seeded ids that used to exist and have been deliberately retired.
+ *
+ * Removing a piece from `mockWardrobe` is not enough on its own: `items` is
+ * persisted, so a phone that already ran the app keeps its saved copy forever.
+ * The migration in store/useWardrobe.ts strips these once, on the version bump
+ * that retired them.
+ *
+ * These are the ten seeded tops. They were stock photographs of clothes nobody
+ * involved owns, and with only ten shortlist slots per category they crowded
+ * out the wearer's own shirts on every recommendation — the whole reason the
+ * feature looked broken. Everything else in the seed stays: an outfit still
+ * needs bottoms and shoes to assemble, and the cultural pieces are what the
+ * try-on demo is built around.
+ */
+export const RETIRED_SEED_IDS = [
+  "top-1",
+  "top-2",
+  "top-3",
+  "top-4",
+  "top-5",
+  "top-6",
+  "top-7",
+  "top-8",
+  "top-9",
+  "top-10",
+];
+
 export const mockWardrobe: WardrobeItem[] = [
-  { id: "top-1", name: "Oxford Shirt", brand: "Hartley Row", category: "tops", color: "#FFFFFF", colorName: "white", occasions: ["work", "formal", "casual"], image: photo("1620799139507-2a76f79a2f4d") },
-  { id: "top-2", name: "Crewneck Tee", brand: "Everline", category: "tops", color: "#1C1B19", colorName: "black", occasions: ["casual", "workout"], image: photo("1581655353564-df123a1eb820") },
-  { id: "top-3", name: "Knit Sweater", brand: "Aster & Oak", category: "tops", color: "#8A9A80", colorName: "sage", occasions: ["casual", "work"], image: photo("1574201635302-388dd92a4c3f") },
-  { id: "top-4", name: "Silk Blouse", brand: "Maison Vale", category: "tops", color: "#F1E9DA", colorName: "cream", occasions: ["work", "date night", "formal"], image: photo("1761117228880-df2425bd70da") },
-  { id: "top-5", name: "Striped Cotton Tee", brand: "Everline", category: "tops", color: "#D8D2C4", colorName: "stone", occasions: ["casual", "workout"], image: photo("1618786177957-29d9b6b26d8a") },
+  // No seeded `tops`. See RETIRED_SEED_IDS above — the wearer's own shirts are
+  // the tops now, which is the point of the app.
 
   { id: "bottom-1", name: "Denim Jeans", brand: "Form & Fold", category: "bottoms", color: "#3B4A6B", colorName: "indigo", occasions: ["casual"], image: photo("1570308345368-f21d4b0d81a9") },
   { id: "bottom-2", name: "Tailored Trousers", brand: "Hartley Row", category: "bottoms", color: "#3A3A3A", colorName: "charcoal", occasions: ["work", "formal"], image: photo("1624378439575-d8705ad7ae80") },
@@ -91,31 +173,24 @@ export const mockWardrobe: WardrobeItem[] = [
   { id: "acc-3", name: "Silk Scarf", brand: "Maison Vale", category: "accessories", color: "#6B2545", colorName: "plum", occasions: ["work", "date night"], image: photo("1606259458027-54d2a728b6ab") },
   { id: "acc-4", name: "Canvas Tote Bag", brand: "North & Ash", category: "accessories", color: "#D8D2C4", colorName: "stone", occasions: ["casual", "work"], image: photo("1574365569389-a10d488ca3fb") },
 
-  // South Asian formalwear, as one-piece garments so CatVTON fits the whole
-  // torso at once (cloth_type `overall`) rather than half of it.
+  // South Asian formalwear, as one-piece garments so try-on dresses the whole
+  // body in a single pass (FASHN `one-pieces`) rather than half of it.
   //
-  // Worth knowing before judging the results: these are **editorial photographs
-  // of people wearing the garment**, not the flat product shots the rest of the
-  // wardrobe uses. Unsplash has very little Pakistani or Indian clothing shot on
-  // a hanger, and a model wearing a piece is a weaker reference than the piece
-  // by itself — the model has to separate garment from wearer before it can
-  // transfer anything. Expect these to read less crisply than the shirts below.
-  // Replacing them with real product photography is the single biggest quality
-  // win available here.
+  // These are **editorial photographs of people wearing the garment**, not the
+  // flat product shots the rest of the wardrobe uses — Unsplash has very little
+  // Pakistani or Indian clothing shot on a hanger. That used to be a real
+  // problem: CatVTON had to separate garment from wearer first and returned a
+  // smeared drape. FASHN v1.6 takes on-model references as a supported input,
+  // and the same lilac kameez now comes back with its embroidery legible. They
+  // are no longer the weak items in the wardrobe.
   { id: "dress-1", name: "Embroidered Kameez", brand: "Lahore Atelier", category: "dresses", color: "#A98BB0", colorName: "mauve", occasions: ["formal", "date night"], image: photo("1705920821957-5d1a22a1d829") },
   { id: "dress-2", name: "Kameez & Dupatta", brand: "Lahore Atelier", category: "dresses", color: "#1C1B19", colorName: "black", occasions: ["formal", "date night", "work"], image: photo("1705921266336-50fa88412176") },
   { id: "dress-3", name: "Chiffon Shalwar Kameez", brand: "Lahore Atelier", category: "dresses", color: "#A9784F", colorName: "tan", occasions: ["work", "formal"], image: photo("1705920821970-1221b67e8ced") },
   { id: "dress-4", name: "Silk Sari", brand: "Meharbani", category: "dresses", color: "#2E6B4F", colorName: "emerald", occasions: ["formal", "date night"], image: photo("1597983073512-90bd150e19f6") },
   { id: "dress-5", name: "Bridal Lehenga", brand: "Meharbani", category: "dresses", color: "#6B2545", colorName: "plum", occasions: ["formal"], image: photo("1756483488645-5973a1a92e33") },
 
-  // Casual and relaxed-fit pieces, all shot on a hanger against a plain ground —
-  // which is what CatVTON was trained on, and why these transfer better than
-  // the formalwear above.
-  { id: "top-6", name: "Linen Button-Down", brand: "Everline", category: "tops", color: "#3B4A6B", colorName: "indigo", occasions: ["work", "casual"], image: photo("1626497764746-6dc36546b388") },
-  { id: "top-7", name: "Cotton Polo", brand: "Birch Supply Co.", category: "tops", color: "#FFFFFF", colorName: "white", occasions: ["casual", "work"], image: photo("1621773881532-fe65715b5137") },
-  { id: "top-8", name: "Boxy Crew Tee", brand: "Everline", category: "tops", color: "#8A9A80", colorName: "sage", occasions: ["casual", "workout"], image: photo("1523380677598-64d85d015339") },
-  { id: "top-9", name: "Striped Casual Shirt", brand: "Form & Fold", category: "tops", color: "#4A5A78", colorName: "denim", occasions: ["casual", "work"], image: photo("1613461920867-9ea115fee900") },
-  { id: "top-10", name: "Relaxed Overshirt", brand: "North & Ash", category: "tops", color: "#3A3A3A", colorName: "charcoal", occasions: ["casual"], image: photo("1604898426702-4b4f1c5e973a") },
+  // The relaxed-fit tops that used to sit here are retired too — same reason,
+  // and their ids are in RETIRED_SEED_IDS.
 
   { id: "bottom-5", name: "Baggy Jeans", brand: "Form & Fold", category: "bottoms", color: "#6E6A62", colorName: "grey", occasions: ["casual"], image: photo("1615420733239-070fc4b95914") },
   { id: "bottom-6", name: "Wide-Leg Jeans", brand: "Form & Fold", category: "bottoms", color: "#3B4A6B", colorName: "indigo", occasions: ["casual"], image: photo("1714729382642-59f19c74440e") },

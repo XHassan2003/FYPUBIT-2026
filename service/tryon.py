@@ -1,37 +1,48 @@
-"""Put the user in the clothes: virtual try-on with CatVTON.
+"""Put the user in the clothes: virtual try-on with FASHN v1.6.
 
-This used to ask Gemini to compose a new photograph from reference images. That
-is a different job from try-on, with a different failure mode — the result
-looked *plausible* rather than *accurate*, and faces drifted — so it has been
-replaced by a model built for the task.
+Third model in this endpoint's life, and each swap was for a reason worth
+knowing.
 
-**CatVTON** (Chong et al., ICLR 2025) treats try-on as inpainting rather than
-generation. The garment and the person are concatenated along the spatial
-dimension and handed to a single denoising UNet: no warping module, no pose
-encoder, no ReferenceNet, no text branch. 899M parameters in total, 49.6M of
-them trainable. Because the person's pixels outside the garment region are
-never regenerated, the face, the hair and the background survive intact —
-exactly the thing the Gemini version could not promise.
+*Gemini* composed a new photograph from reference images. Plausible rather than
+accurate, and faces drifted, because nothing in the method required the output
+to contain the same person as the input.
 
-It is hosted rather than run here. `fal-ai/cat-vton` is one HTTPS call and
-needs no GPU, no detectron2, and no CUDA on a Windows laptop. The trade is a
-per-generation cost and a network dependency — the same trade the previous
-version already made with Gemini, so nothing about the deployment story
-changed.
+*CatVTON* fixed that by treating try-on as inpainting — only the masked garment
+region is regenerated, so the face, hair and background survive untouched. It
+was a real try-on model and a large step up. Two things kept biting:
 
-**What CatVTON cannot do**, and the app has to respect rather than paper over:
+  - It wants the garment as a **flat product shot**. Given a photograph of a
+    *person wearing* the garment it has to separate garment from wearer first,
+    and the result came back smeared. That made half the useful sources on the
+    internet unusable, and it is why the South Asian formalwear in the seed
+    wardrobe reads worse than the hanger-shot shirts beside it.
+  - 768x1024, and fine detail did not survive. An Oxford shirt came back the
+    right colour and the right shape with no collar and no buttons.
 
-- *One garment per pass.* The model fits a single garment into a single masked
-  region. There is no multi-garment mode, so `MAX_GARMENTS` is 1 — see the note
-  on it below for why chaining was not the answer.
-- *Clothes only.* It is trained on VITON-HD and DressCode, which are upper
-  body, lower body and dresses. Shoes, bags and jewellery are not in the label
-  space at all. `CLOTH_TYPES` is therefore a whitelist and everything else is
-  refused before anything is spent.
+**FASHN v1.6** is built for exactly those two problems. It renders at
+**864x1296**, it is trained to preserve garment text and print, and it takes a
+`garment_photo_type` control that accepts **on-model photographs as well as
+flat-lay** ones. That last point is the reason for this swap: it means a
+garment picture found on a retailer's site or in a search result works as a
+reference, rather than only clothes you have photographed on a hanger yourself.
 
-The structure is the part that was built to survive, and it did: this file was
-rewritten end to end and `main.py`, `models.py` and the app's request shape
-were not touched.
+Still hosted on fal, so nothing about deployment changed: one HTTPS call, no
+GPU, no CUDA.
+
+**What it still cannot do**, and the app respects rather than papers over:
+
+- *One garment per pass.* `MAX_GARMENTS` is 1 — see the note on it below.
+- *Clothes only, in three shapes.* `tops`, `bottoms`, `one-pieces`. Shoes, bags
+  and jewellery are not categories it has, so `FASHN_CATEGORIES` is a whitelist
+  and everything else is refused before anything is spent.
+- *No separate outerwear category.* CatVTON had `outer`, which layered a coat
+  over what the person already wore. FASHN has no equivalent, so outerwear maps
+  to `tops` and **replaces** the existing top rather than going over it. That is
+  a genuine regression from the previous model and the only one in this swap.
+
+The structure is the part that was built to survive, and it has now done so
+twice: this file was rewritten end to end again, and `main.py`, `models.py` and
+the app's request shape were not touched either time.
 """
 
 import base64
@@ -50,52 +61,134 @@ from errors import VisionFailed, VisionRateLimited, VisionUnavailable, status_of
 # timing appears alongside the request line it belongs to.
 log = logging.getLogger("stylist.tryon")
 
-MODEL = "fal-ai/cat-vton"
+MODEL = "fal-ai/fashn/tryon/v1.6"
 
-# Which masked region the model should inpaint. The app's own categories on the
-# left, CatVTON's cloth types on the right.
+# The app's own categories on the left, FASHN's on the right.
 #
-# A whitelist, not a mapping with a default. Guessing "upper" for an unknown
+# A whitelist, not a mapping with a default. Guessing `tops` for an unknown
 # category would put a pair of trousers on someone's chest, and finding that out
 # costs a generation — refusing costs nothing. `shoes` and `accessories` are
 # absent because the model has no notion of them, not because they were
 # forgotten.
-CLOTH_TYPES = {
-    "tops": "upper",
-    "bottoms": "lower",
+#
+# FASHN also offers `auto`, which infers the category from the garment image.
+# Deliberately unused: the wardrobe already *knows* what each piece is, and
+# letting the model re-guess would trade a fact for a prediction — one that,
+# when wrong, is wrong expensively and silently.
+FASHN_CATEGORIES = {
+    "tops": "tops",
+    "bottoms": "bottoms",
     # One piece from shoulder to hem — a shalwar kameez, a kurta, a sari, a
-    # lehenga, a western dress. `overall` masks the whole torso in a single pass,
-    # which is the only correct answer for these: mapping a kameez to `upper`
-    # fits its top half and leaves the wearer's own trousers showing through
-    # underneath. DressCode, one of CatVTON's two training sets, has a dresses
-    # split, so this is a case the model was actually trained for.
-    "dresses": "overall",
-    # `outer` rather than `upper`: the coat is layered over what the person is
-    # already wearing instead of replacing it.
-    "outerwear": "outer",
+    # lehenga, a western dress. Fitting these as `tops` would dress the upper
+    # half and leave the wearer's own trousers showing through underneath.
+    "dresses": "one-pieces",
+    # The one regression in moving off CatVTON, which had a dedicated `outer`
+    # type that layered a coat over what was already worn. FASHN has three
+    # categories and none of them is outerwear, so a coat is a top-half garment
+    # and **replaces** the top rather than going over it. Worth knowing before
+    # demoing a blazer over a shirt and wondering where the shirt went.
+    "outerwear": "tops",
 }
 
 # One. Not a tunable — it is what the architecture does.
 #
 # Chaining passes (dress the top half, feed that result back in as the person,
-# dress the bottom half) was the obvious way to keep the old six-garment API.
-# It was not worth it: the second pass treats the first pass's output as a
-# photograph, so every artifact is baked in and re-inpainted, and the cost and
-# latency multiply. The app only ever sends one garment anyway — see
-# `app/try-on.tsx`, where step two picks exactly one piece.
-MAX_GARMENTS = 1
+# Two: one for the lower body and one for the upper. A full outfit.
+#
+# **This reverses an earlier decision, and the reason it reverses is the model.**
+# Under CatVTON chaining was rejected outright: the second pass treats the first
+# pass's output as a photograph, and CatVTON's output was rough enough that
+# every artifact got baked in and re-inpainted, so a two-piece look came out
+# visibly worse than either piece alone. FASHN v1.6 returns a clean enough image
+# to survive being fed back in, which is what makes this worth doing now and did
+# not before.
+#
+# The costs are real and unchanged: two passes are two generations, billed and
+# waited for. That is the honest price of seeing a whole outfit, and the app says
+# so before spending it.
+#
+# **What chaining is good at, measured rather than assumed.** Three two-piece
+# runs against the same photograph:
+#
+#   plain polo + tailored trousers   45s   both garments clean, nothing bled
+#   dip-dye shirt + jeans            57s   the shirt's print ran down the legs
+#   the same, segmentation_free off  46s   worse — trousers became a skirt
+#
+# The pattern is the garment, not the chaining. A loud all-over print gives pass
+# two something to smear, and because pass two's canvas *is* pass one's output
+# there is nothing downstream to correct it — errors accumulate across passes
+# rather than averaging out. Ordinary clothes chain fine.
+MAX_GARMENTS = 2
 
-# 768x1024, portrait — the result is a person and the screen it lands on is a
-# phone held upright. Matches PERSON_EDGE in store/useTryOn.ts, so the photo the
-# app uploads is already the right size.
-IMAGE_SIZE = "portrait_4_3"
+# Which part of the body a garment occupies, for deciding what can be worn
+# together. Keyed by the app's own categories, not FASHN's, because two app
+# categories (`tops` and `outerwear`) collapse onto one FASHN category and the
+# distinction still matters here: a coat and a shirt both want the upper body,
+# so asking for both would mean the second pass simply erasing the first.
+BODY_SLOTS = {
+    "tops": "upper",
+    "outerwear": "upper",
+    "bottoms": "lower",
+    # Covers both halves at once, which is why it cannot be combined with
+    # anything: a kameez and a pair of trousers is not a two-piece outfit, it is
+    # one garment fighting another for the same pixels.
+    "dresses": "whole",
+}
 
-# fal's defaults, named here so they are visible and tunable in one place rather
-# than implicit in the request. 30 steps is the quality/latency knob; the
-# guidance scale is low because there is no text prompt to adhere to — the
-# garment image is the condition.
-STEPS = 30
-GUIDANCE = 2.5
+# The order passes run in, lower body first.
+#
+# The last pass is the one drawn freshest, and at the waist the top overlaps the
+# bottom — a shirt falls over a waistband, not under it. Running tops last lets
+# that overlap render naturally instead of having trousers drawn on top of a
+# shirt that was already placed.
+SLOT_ORDER = ["lower", "upper", "whole"]
+
+# The speed/quality trade, and the reason to be on this model at all.
+#
+# `balanced` is fal's default. `quality` is set here because the complaint that
+# prompted the swap was accuracy — collars and buttons vanishing, prints turning
+# to mush — and paying for the slower path is the whole point of having changed
+# model. Drop to `balanced` if generations start feeling long; `performance`
+# gives up most of what was gained.
+MODE = "quality"
+
+# `auto` lets FASHN work out whether the garment picture is a flat-lay or a
+# photograph of someone wearing the item, and parse it accordingly.
+#
+# Left on auto rather than pinned, because both kinds are in play here and the
+# app cannot tell them apart: the seed wardrobe mixes hanger shots with editorial
+# photographs, clothes imported from your own camera are flat-lays, and a garment
+# saved off a shop's website is almost always on a model. Pinning either value
+# would quietly ruin the other half.
+GARMENT_PHOTO_TYPE = "auto"
+
+# PNG, matching fal's own default. Lossless, and the point of this model is that
+# fine detail survives — re-encoding it as JPEG on the way out would be an odd
+# way to spend the quality just paid for.
+OUTPUT_FORMAT = "png"
+
+# fal's default, and left alone after trying the alternative.
+#
+# The reasoning for turning it off was sound: mask-free lets the model decide
+# where a garment goes rather than confining it to a segmented region, and the
+# first chained outfit came back with the shirt's print bleeding down the
+# trousers. An explicit mask should have contained that.
+#
+# It did not. Set to `false`, the same request turned the trousers into a
+# knee-length skirt and mangled a foot — worse on shape as well as no better on
+# bleed. Recorded here so the next person does not spend the same two
+# generations rediscovering it.
+SEGMENTATION_FREE = True
+
+# There is no size argument, which is why the `image_size` this file used to
+# send is gone rather than renamed.
+#
+# fal documents the model as rendering at 864x1296. Measured, it does not: two
+# runs against a 1024-wide person photograph both came back **1024x1280**, which
+# is the person image's own size. So the output tracks the input rather than
+# being fixed, and PERSON_EDGE in store/useTryOn.ts is what actually decides the
+# resolution the user gets. Worth knowing before trying to raise quality by
+# changing something here — the lever is on the app side.
 
 # A ceiling for a queue that never drains, not a target. It sits inside the app's
 # own budget (TRY_ON_TIMEOUT_MS) so the service is the one that gives up first
@@ -108,16 +201,18 @@ GUIDANCE = 2.5
 # too-tight ceiling does not save money, it spends it and throws the result
 # away — which makes waiting longer strictly better than giving up early.
 #
-# How long a generation takes is really a measure of how well the photograph
-# suits the model. Roughly, from what has been observed: a clean studio shot ~11s,
-# an awkward editorial crop ~64s, and a difficult phone photograph longer still.
-# Anything approaching this ceiling was probably going to produce a poor result
-# anyway, which is why the timeout message talks about the photograph.
+# How long a generation takes is partly a measure of how well the photograph
+# suits the model. Under CatVTON: a clean studio shot ~11s, an awkward editorial
+# crop ~64s, a difficult phone photograph past 100s. FASHN on `quality` is a
+# heavier model, so read those as the shape of the relationship rather than
+# numbers to expect — but a run pushing this ceiling still says something is
+# wrong with the input, which is why the timeout message talks about the
+# photograph.
 CLIENT_TIMEOUT_S = 240.0
 
-# Past this, say so in the log. A clean photograph comes back in about ten
-# seconds, so half a minute means the model is struggling with what it was
-# given — and every slow generation observed so far has also been a poor one.
+# Past this, say so in the log. Deliberately not tightened for FASHN: `quality`
+# mode is slower by design, and a threshold that fires on every healthy run
+# teaches you to ignore it.
 SLOW_GENERATION_S = 30.0
 
 # Fetching a finished image off fal's CDN is quick or broken.
@@ -137,8 +232,8 @@ def _require_key() -> None:
         )
 
 
-def _cloth_type(category: Optional[str]) -> str:
-    """Which region CatVTON should fit this garment into.
+def _fashn_category(category: Optional[str]) -> str:
+    """Which of FASHN's three categories this garment belongs to.
 
     Raises rather than guessing, for both the unknown and the unsupported case.
     The message names the garment, because "shoes cannot be tried on" is
@@ -150,15 +245,55 @@ def _cloth_type(category: Optional[str]) -> str:
             "should sit on the body."
         )
 
-    cloth_type = CLOTH_TYPES.get(category)
-    if cloth_type is None:
-        wearable = ", ".join(CLOTH_TYPES)
+    fashn_category = FASHN_CATEGORIES.get(category)
+    if fashn_category is None:
+        wearable = ", ".join(FASHN_CATEGORIES)
         raise VisionFailed(
-            f"CatVTON cannot fit {category} — it dresses {wearable} only. "
+            f"Try-on cannot fit {category} — it dresses {wearable} only. "
             "Pick a different piece."
         )
 
-    return cloth_type
+    return fashn_category
+
+
+def _ordered_for_chaining(garments: list[dict]) -> list[dict]:
+    """Check the outfit is wearable, and put it in the order to render it.
+
+    Every refusal here happens before the network is touched, so an impossible
+    combination costs nothing rather than one generation per pass.
+
+    Two rules, and both exist because breaking them still produces an image —
+    just a wrong one, paid for, with nothing raising to say so:
+
+    - **One garment per part of the body.** Two tops means the second pass paints
+      over the first and the money spent on it disappears. A coat counts as a
+      top; FASHN has no outerwear category to layer with.
+    - **A one-piece is worn alone.** A kameez already covers the body a pair of
+      trousers wants, so the two cannot both survive.
+    """
+    seen: dict[str, str] = {}
+
+    for garment in garments:
+        category = garment.get("category")
+        # Raises for an unknown or unwearable category, and names it.
+        _fashn_category(category)
+
+        slot = BODY_SLOTS[category]
+        if slot in seen:
+            raise VisionFailed(
+                f"You have picked two things for the same part of the outfit — "
+                f"{seen[slot]} and {category}. Choose one of them."
+            )
+        seen[slot] = category
+
+    if "whole" in seen and len(seen) > 1:
+        others = ", ".join(name for slot, name in seen.items() if slot != "whole")
+        raise VisionFailed(
+            f"A {seen['whole'][:-2]} is a whole outfit on its own, so it cannot "
+            f"be worn with {others}. Try it by itself."
+        )
+
+    return sorted(garments, key=lambda g: SLOT_ORDER.index(BODY_SLOTS[g["category"]]))
 
 
 def _data_uri(image_base64: str, mime_type: str) -> str:
@@ -227,7 +362,7 @@ def _raise_for(err: Exception) -> NoReturn:
     if status == 422:
         # fal validates the arguments before queueing, so this is our request
         # being wrong — a malformed image, or a cloth type it did not accept.
-        raise VisionFailed(f"CatVTON would not accept that request: {err}") from err
+        raise VisionFailed(f"The try-on model would not accept that request: {err}") from err
 
     if status in (502, 503, 504):
         raise VisionFailed(
@@ -270,14 +405,21 @@ def generate_try_on(
     person_base64: str,
     person_mime_type: str,
     garments: list[dict],
-    image_size: str = IMAGE_SIZE,
+    mode: str = MODE,
 ) -> dict:
-    """Fit the garment onto the person. Returns base64 image bytes.
+    """Dress the person in the outfit. Returns base64 image bytes.
 
-    `garments` is a list of {image, mimeType, name, category} — a list of one,
-    kept as a list so the request shape did not have to change when the model
-    did. `name` is now unused: CatVTON reads the garment out of its photograph
-    and has no text branch to tell it what the photograph is of.
+    `garments` is a list of {image, mimeType, name, category}: one piece, or a
+    bottom and a top for a whole outfit. `name` is unused — FASHN reads the
+    garment out of its photograph and has no text branch to be told what the
+    photograph is of.
+
+    **A garment per pass, chained.** The model fits one region at a time, so a
+    two-piece outfit is two calls, with the first call's output becoming the
+    second call's person. The intermediate is passed on as fal's own URL rather
+    than being downloaded and re-uploaded — it is already on their CDN, and
+    round-tripping several megabytes through this process to hand it straight
+    back would be pure latency.
 
     Raises the same three exception types as the photo analyser, so the endpoint
     treats a missing key, a quota error and a failure exactly as it already does
@@ -288,71 +430,127 @@ def generate_try_on(
 
     if len(garments) > MAX_GARMENTS:
         raise VisionFailed(
-            "CatVTON fits one garment at a time. Send a single piece."
+            f"Try-on fits {MAX_GARMENTS} pieces at most — one for the top half "
+            "and one for the bottom."
         )
 
-    garment = garments[0]
-
-    # Both of these refuse before the network is touched, so an unwearable
-    # category or an unreadable image costs nothing.
-    cloth_type = _cloth_type(garment.get("category"))
-    human_image = _data_uri(person_base64, person_mime_type)
-    garment_image = _data_uri(garment["image"], garment.get("mimeType", "image/jpeg"))
+    # Everything below refuses before the network is touched, so an impossible
+    # outfit or an unreadable image costs nothing.
+    ordered = _ordered_for_chaining(garments)
+    model_image = _data_uri(person_base64, person_mime_type)
+    passes = [
+        (
+            _fashn_category(garment["category"]),
+            _data_uri(garment["image"], garment.get("mimeType", "image/jpeg")),
+        )
+        for garment in ordered
+    ]
 
     _require_key()
 
-    # Roughly what is being uploaded. Base64 is 4 bytes per 3, and a payload far
-    # larger than expected means the app's resize did not happen — worth seeing
-    # before blaming the model for being slow.
-    payload_kb = (len(human_image) + len(garment_image)) * 3 // 4 // 1024
-    log.info("try-on: %s garment, %s, ~%d KB up", cloth_type, image_size, payload_kb)
-
+    image: dict = {}
+    url: Optional[str] = None
     started = time.monotonic()
 
-    try:
-        result = fal_client.subscribe(
-            MODEL,
-            arguments={
-                "human_image_url": human_image,
-                "garment_image_url": garment_image,
-                "cloth_type": cloth_type,
-                "image_size": image_size,
-                "num_inference_steps": STEPS,
-                "guidance_scale": GUIDANCE,
-            },
-            client_timeout=CLIENT_TIMEOUT_S,
+    # One budget for the whole request, not one per pass.
+    #
+    # This matters more than it looks. `CLIENT_TIMEOUT_S` used to be handed
+    # straight to a single call; with chaining, passing it per pass would let a
+    # two-piece outfit run for twice as long as the app is prepared to wait,
+    # which quietly breaks the invariant that the service gives up first and
+    # gets to explain why. A deadline keeps that promise whatever the outfit,
+    # and a quick first pass hands its unused time to the second rather than
+    # wasting it.
+    deadline = started + CLIENT_TIMEOUT_S
+
+    for index, (category, garment_image) in enumerate(passes, start=1):
+        # Roughly what is being uploaded. Base64 is 4 bytes per 3, and a payload
+        # far larger than expected means the app's resize did not happen — worth
+        # seeing before blaming the model for being slow. From the second pass on
+        # the person is a URL, not bytes, so only the garment counts.
+        payload_kb = (len(model_image) + len(garment_image)) * 3 // 4 // 1024
+        log.info(
+            "try-on: pass %d/%d — %s, mode=%s, ~%d KB up",
+            index,
+            len(passes),
+            category,
+            mode,
+            payload_kb,
         )
-    except Exception as err:  # noqa: BLE001 — see _raise_for on why not by type
-        # Logged before it is translated, because the elapsed time is most of
-        # the diagnosis and _raise_for is about to discard it. A generation that
-        # ran for minutes and a key that was rejected in 200ms both arrive at the
-        # app as one 502, and they are not remotely the same problem.
-        log.warning("try-on: failed after %.1fs — %s", time.monotonic() - started, err)
-        _raise_for(err)
+
+        pass_started = time.monotonic()
+        remaining = deadline - pass_started
+
+        if remaining <= 0:
+            # The budget went on an earlier pass. Raised through _raise_for so
+            # it reads as the same failure a single slow pass would give.
+            _raise_for(TimeoutError(f"no time left after pass {index - 1}"))
+
+        try:
+            result = fal_client.subscribe(
+                MODEL,
+                arguments={
+                    "model_image": model_image,
+                    "garment_image": garment_image,
+                    "category": category,
+                    "mode": mode,
+                    "garment_photo_type": GARMENT_PHOTO_TYPE,
+                    "output_format": OUTPUT_FORMAT,
+                    "segmentation_free": SEGMENTATION_FREE,
+                },
+                client_timeout=remaining,
+            )
+        except Exception as err:  # noqa: BLE001 — see _raise_for on why not by type
+            # Logged before it is translated, because the elapsed time and which
+            # pass failed are most of the diagnosis and _raise_for is about to
+            # discard both. A generation that ran for minutes and a key rejected
+            # in 200ms both arrive at the app as one 502.
+            log.warning(
+                "try-on: pass %d/%d failed after %.1fs — %s",
+                index,
+                len(passes),
+                time.monotonic() - pass_started,
+                err,
+            )
+            _raise_for(err)
+
+        # `images`, plural and a list — FASHN can return several when
+        # `num_samples` is raised. CatVTON answered with a single `image` object,
+        # and reading that shape here yields None rather than raising, so the
+        # mistake would surface as "finished without producing an image" on every
+        # call. One sample is requested, so the first is the only one.
+        images = (result or {}).get("images") or []
+        image = images[0] if images and isinstance(images[0], dict) else {}
+        url = image.get("url")
+
+        if not url:
+            # A queued job that finishes without an image. Rare, and not
+            # something the user can fix by choosing a different photograph — so
+            # do not tell them to.
+            raise VisionFailed(
+                "The try-on model finished without producing an image. Try again."
+            )
+
+        log.info(
+            "try-on: pass %d/%d done in %.1fs", index, len(passes), time.monotonic() - pass_started
+        )
+
+        # The person for the next pass is this pass's result. Handing fal back
+        # its own URL keeps the image on their side of the network.
+        model_image = url
 
     elapsed = time.monotonic() - started
-    log.info("try-on: fal returned in %.1fs", elapsed)
+    log.info("try-on: %d pass(es) in %.1fs total", len(passes), elapsed)
 
-    if elapsed > SLOW_GENERATION_S:
-        # Not an error, and nothing to do about it now — but the correlation is
-        # strong enough to be worth flagging while the photograph is still on
-        # screen: slow generations have so far been the ones that came back
-        # smeared. See the note on CLIENT_TIMEOUT_S.
+    if elapsed > SLOW_GENERATION_S * len(passes):
+        # Scaled by the number of passes, so a two-piece outfit is not reported
+        # as slow purely for being two generations. See the note on
+        # CLIENT_TIMEOUT_S: slow has correlated with poor.
         log.warning(
-            "try-on: %.1fs is slow — the photograph is probably hard for the "
-            "model, and the result may be poor",
+            "try-on: %.1fs across %d pass(es) is slow — the photograph is "
+            "probably hard for the model, and the result may be poor",
             elapsed,
-        )
-
-    image = (result or {}).get("image") or {}
-    url = image.get("url")
-
-    if not url:
-        # A queued job that finishes without an image. Rare, and not something
-        # the user can fix by choosing a different photograph — so do not tell
-        # them to.
-        raise VisionFailed(
-            "The try-on model finished without producing an image. Try again."
+            len(passes),
         )
 
     return _download(url, fallback_mime=image.get("content_type"))
@@ -364,5 +562,5 @@ __all__ = [
     "VisionRateLimited",
     "VisionUnavailable",
     "MAX_GARMENTS",
-    "CLOTH_TYPES",
+    "FASHN_CATEGORIES",
 ]

@@ -1,4 +1,4 @@
-"""Turn a folder of garment photographs into wardrobe items.
+﻿"""Turn a folder of garment photographs into wardrobe items.
 
 Photograph your clothes, run this once, and they are in the app — named,
 categorised and colour-matched, with no typing.
@@ -12,7 +12,7 @@ next reload.
 
 **Why your own photographs beat anything scraped from a retailer.** Legality
 aside — and it is not aside, a shop's product photography is theirs — a garment
-shot flat or on a hanger against a plain wall is the reference CatVTON was
+shot flat or on a hanger against a plain wall is the cleanest reference the
 trained on, and it outperforms the editorial photos in the seed wardrobe. The
 best try-on results this project can produce come from clothes you own and
 photographed yourself.
@@ -44,7 +44,7 @@ from pathlib import Path
 BASE = "http://127.0.0.1:8000"
 PHOTO_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 
-# Garment references do not need to be large -- CatVTON reads colour, cut and
+# Garment references do not need to be large -- the model reads colour, cut and
 # detail, all of which survive this -- and twenty phone photographs at full size
 # would put a hundred megabytes of assets into the repository.
 MAX_EDGE = 900

@@ -1,10 +1,27 @@
 import { File, Paths } from "expo-file-system";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
+// `expo-media-library/legacy`, not the package root, and the difference is the
+// whole app.
+//
+// In SDK 57 the root export *is* the new API, and it binds the native module at
+// class-definition time — `class Query extends ExpoMediaLibraryNext.Query`. That
+// runs on import, so on a runtime without `ExpoMediaLibraryNext` it does not
+// fail politely when you call it, it throws while the module is loading. Expo Go
+// ships the classic `ExpoMediaLibrary` and not the Next one, so importing the
+// root took down everything downstream: this store, then `try-on.tsx` and
+// `(tabs)/index.tsx`, which then had no default export, and finally the tab
+// layout with `Cannot read property 'ErrorBoundary' of undefined`. One bad
+// import, four unrelated-looking errors.
+//
+// The `/legacy` subpath is the same functions against `ExpoMediaLibrary`, which
+// Expo Go does have. Do not "tidy" this back to the package root without a
+// development build to run it in.
+import * as MediaLibrary from "expo-media-library/legacy";
 import * as Sharing from "expo-sharing";
 import { Image as RNImage } from "react-native";
 import { create } from "zustand";
-import { WardrobeItem } from "@/data/mockWardrobe";
+import { toggleInOutfit, WardrobeItem } from "@/data/mockWardrobe";
 import { useWardrobe } from "./useWardrobe";
 
 /**
@@ -25,13 +42,17 @@ import { useWardrobe } from "./useWardrobe";
  * `require` is a module id until it is asked for one.
  *
  * Its own file rather than the `today-hero.jpg` this used to point at, and the
- * reason is the model. CatVTON wants what it was trained on: **one person,
- * head to foot, front on, against a plain background, not already wearing
- * something bulky.** `today-hero.jpg` is an editorial crop — the subject small
- * in a lot of empty wall, cut off at the chest, in a heavy coat — which gives
- * the human parser almost nothing to mask. Tried against it, an Oxford shirt
- * came back as a shapeless drape and the hand smeared; the same shirt on this
- * photograph came back as a clean white top in 11 seconds rather than 64.
+ * reason is the model. What it wants of the *person* photograph is **one
+ * person, head to foot, front on, against a plain background, not already
+ * wearing something bulky.** `today-hero.jpg` is an editorial crop — the
+ * subject small in a lot of empty wall, cut off at the chest, in a heavy coat.
+ * Tried against it under CatVTON, an Oxford shirt came back as a shapeless
+ * drape with the hand smeared; the same shirt on this photograph came back
+ * clean, in 11 seconds rather than 64.
+ *
+ * Those requirements survived the move to FASHN v1.6. What FASHN relaxed is the
+ * *garment* side — it accepts a photograph of someone wearing the item, not
+ * only a flat-lay — which is a different image and not this one.
  *
  * So: if you ever swap this image, keep those four properties. It is not a
  * question of taste, and a prettier photograph that breaks them makes the whole
@@ -47,16 +68,25 @@ export const TRY_ON_DEMO_PHOTO = RNImage.resolveAssetSource(
 ).uri;
 
 /**
- * Garment images do not need to be large. CatVTON reads them for colour, cut
- * and detail, all of which survive 768px, and a full-size phone photo would
- * make the upload slow before the model had started.
+ * Garment images do not need to be large. The model reads them for colour, cut
+ * and detail, and a full-size phone photo would make the upload slow before the
+ * model had started.
+ *
+ * Raised from 768 with the move to FASHN v1.6, which renders at 864x1296 and is
+ * specifically meant to keep garment text and print. Feeding it a reference
+ * narrower than its own output would throw away the thing being paid for.
  */
-const GARMENT_EDGE = 768;
+const GARMENT_EDGE = 864;
 
 /**
- * The person is the subject and gets more pixels. 1024 is not arbitrary: the
- * service asks for `portrait_4_3`, which is 768x1024, so this is the height the
- * result comes back at. Sending less would upscale; sending more is discarded.
+ * The person is the subject and gets more pixels — and under FASHN v1.6 this
+ * number does more than that: **it decides the resolution of the result.**
+ *
+ * fal documents the model as rendering at a fixed 864x1296. Measured, it
+ * matches the person image instead: a 1024-wide photograph came back
+ * 1024x1280, twice. So raising this raises the output, and lowering it lowers
+ * it. Left at 1024 because that is already above what fal claims and the upload
+ * has to cross a phone network.
  */
 const PERSON_EDGE = 1024;
 
@@ -180,7 +210,15 @@ interface TryOnState {
    * distinction the UI cannot act on would only complicate the render.
    */
   photoConcern?: PhotoConcern;
-  itemId?: string;
+  /**
+   * The pieces being tried on, in selection order — a single garment, or a
+   * bottom and a top for a whole outfit.
+   *
+   * A list rather than the single `itemId` this used to hold. The rule for what
+   * may be in it lives in `toggleInOutfit`, shared with the service so both
+   * halves agree on what an outfit is.
+   */
+  itemIds: string[];
   result?: string;
   /** What `result` actually is, for naming and sharing it. */
   resultMimeType: string;
@@ -188,12 +226,23 @@ interface TryOnState {
   error: string | null;
 
   setPhoto: (uri: string) => void;
-  setItemId: (id: string) => void;
+  /**
+   * Add or remove a piece, displacing whatever it conflicts with. `selected` is
+   * the current selection resolved to items — see the implementation for why
+   * the caller supplies it.
+   */
+  toggleItem: (item: WardrobeItem, selected: WardrobeItem[]) => void;
+  clearItems: () => void;
   useSamplePhoto: () => void;
   pickPhoto: (source: "camera" | "library") => Promise<void>;
   /** Returns the file URI of the generated look, or null. */
-  generate: (item: WardrobeItem) => Promise<string | null>;
+  generate: (items: WardrobeItem[]) => Promise<string | null>;
   share: () => Promise<boolean>;
+  /**
+   * Copy the finished look into the phone's photo library. True when it
+   * landed; false sets `error` with the reason.
+   */
+  saveToDevice: () => Promise<boolean>;
   changePhoto: () => void;
   clearError: () => void;
 }
@@ -223,7 +272,7 @@ export const useTryOn = create<TryOnState>()((set, get) => {
   return {
   photo: undefined,
   photoConcern: undefined,
-  itemId: undefined,
+  itemIds: [],
   result: undefined,
   resultMimeType: "image/png",
   status: "idle",
@@ -232,7 +281,20 @@ export const useTryOn = create<TryOnState>()((set, get) => {
   setPhoto: (uri) => {
     void adopt(uri);
   },
-  setItemId: (id) => set({ itemId: id }),
+  /**
+   * `selected` is the current selection already resolved to items, which the
+   * caller has to supply.
+   *
+   * The store keeps ids — it is shared with Home, and an id survives the
+   * wardrobe changing underneath it where a copied item would go stale. But the
+   * rule in `toggleInOutfit` reads categories, and ids alone cannot be turned
+   * back into items from in here without the store holding the wardrobe too.
+   * Every caller already has it, so it passes what it resolved rather than this
+   * store growing a dependency on `useWardrobe` to look them up again.
+   */
+  toggleItem: (item, selected) =>
+    set({ itemIds: toggleInOutfit(selected, item).map((piece) => piece.id) }),
+  clearItems: () => set({ itemIds: [] }),
   useSamplePhoto: () => {
     void adopt(TRY_ON_DEMO_PHOTO);
   },
@@ -276,12 +338,21 @@ export const useTryOn = create<TryOnState>()((set, get) => {
     if (!picked.canceled) await adopt(picked.assets[0].uri);
   },
 
-  generate: async (item) => {
+  generate: async (items) => {
     const { photo } = get();
     if (!photo) return null;
 
-    if (!item.image) {
-      set({ error: "That piece has no photograph to work from.", status: "failed" });
+    if (items.length === 0) {
+      set({ error: "Pick something to try on first.", status: "failed" });
+      return null;
+    }
+
+    const missing = items.find((item) => !item.image);
+    if (missing) {
+      set({
+        error: `${missing.name} has no photograph to work from.`,
+        status: "failed",
+      });
       return null;
     }
 
@@ -290,12 +361,21 @@ export const useTryOn = create<TryOnState>()((set, get) => {
     try {
       const person = await encode(photo, PERSON_EDGE);
       // A garment image can be remote (the seeded wardrobe) or a local file
-      // (anything added from the phone). The manipulator reads both.
-      const garment = await encode(item.image, GARMENT_EDGE);
+      // (anything added from the phone, or imported). The manipulator reads
+      // both. Encoded in parallel because a two-piece outfit would otherwise
+      // pay for two resizes in series before the first request is even sent.
+      const garments = await Promise.all(
+        items.map(async (item) => ({
+          image: await encode(item.image!, GARMENT_EDGE),
+          mimeType: "image/jpeg",
+          name: item.name,
+          category: item.category,
+        }))
+      );
 
-      const outcome = await useWardrobe.getState().generateTryOn(person, "image/jpeg", [
-        { image: garment, mimeType: "image/jpeg", name: item.name, category: item.category },
-      ]);
+      const outcome = await useWardrobe
+        .getState()
+        .generateTryOn(person, "image/jpeg", garments);
 
       if (!outcome.ok) {
         set({ error: outcome.message, status: "failed" });
@@ -337,6 +417,42 @@ export const useTryOn = create<TryOnState>()((set, get) => {
       dialogTitle: "Your Atelier look",
     });
     return true;
+  },
+
+  saveToDevice: async () => {
+    const { result } = get();
+    if (!result) return false;
+
+    // Add-only. `writeOnly: true` asks for permission to *put* a photo in the
+    // library without asking to read the library back, which is all this does
+    // and all it should be trusted with. On iOS that is a visibly smaller
+    // prompt, and someone who declines full access can still save.
+    const permission = await MediaLibrary.requestPermissionsAsync(true);
+
+    if (!permission.granted) {
+      set({
+        // `canAskAgain` false means they chose "don't allow" on a previous
+        // prompt, and the OS will not show another — so the only honest advice
+        // is to point at Settings rather than invite a retry that cannot work.
+        error: permission.canAskAgain
+          ? "Atelier needs permission to save to your photos."
+          : "Photo access is off for Atelier. Turn it on in Settings to save looks.",
+      });
+      return false;
+    }
+
+    try {
+      // The generated file lives in the cache directory, which the OS is free
+      // to empty. Copying it into the photo library is what makes a look
+      // outlast the app — the same reason the result is not persisted in the
+      // store either.
+      await MediaLibrary.saveToLibraryAsync(result);
+      return true;
+    } catch (err) {
+      console.warn("[stylist] could not save to the photo library:", err);
+      set({ error: "Could not save that to your photos. Try again." });
+      return false;
+    }
   },
   };
 });

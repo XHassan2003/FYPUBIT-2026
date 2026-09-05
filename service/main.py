@@ -8,6 +8,7 @@ swapping the app over is a one-function change.
 Run it:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 """
 
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -34,6 +35,28 @@ from vision import analyse_garment
 # The path is explicit because npm runs the service from the project root, so
 # the working directory is not this one.
 load_dotenv(Path(__file__).parent / ".env")
+
+# Give our own loggers somewhere to go.
+#
+# Not optional, and it was missing. uvicorn configures handlers for its own
+# `uvicorn.*` loggers and leaves the root logger bare, so anything logged from
+# `tryon.py` propagated up to a root with no handler and was silently dropped.
+# The effect was worse than no logging: `/try-on` had timing and per-pass
+# instrumentation written into it, the README told people to watch the terminal
+# for it, and none of it ever appeared. Discovered by looking for a line that
+# should have been there and was not.
+#
+# `basicConfig` is a no-op if the root logger already has handlers, so this
+# cannot fight a host that configured logging itself.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(message)s")
+
+# ...and immediately quieten httpx, which turning on INFO logging also switched
+# on. It logs a line per request, and fal's client polls the queue roughly twice
+# a second, so a single try-on buried its own two timing lines under a hundred
+# identical status polls. The point of the logging is that the useful lines are
+# findable.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 app = FastAPI(
     title="AI Personal Stylist",
@@ -143,7 +166,7 @@ def analyse(request: AnalyseRequest) -> AnalyseResponse:
 def try_on(request: TryOnRequest) -> TryOnResponse:
     """Fit the wearer's chosen garment onto their photograph.
 
-    CatVTON, hosted on fal — see tryon.py. Slower and dearer than the other
+    FASHN v1.6, hosted on fal — see tryon.py. Slower and dearer than the other
     endpoints because it runs a diffusion model rather than reading an image,
     so the app gives it a much longer budget and says what it is doing while it
     waits.

@@ -41,6 +41,14 @@
       "@clerk/expo",
       "expo-secure-store",
       "expo-image",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Atelier saves your generated looks to your photos.",
+          "savePhotosPermission": "Atelier saves your generated looks to your photos.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       "expo-sharing",
       "expo-status-bar",
       "expo-web-browser"

@@ -1,4 +1,4 @@
-"""One real CatVTON generation, end to end, without the phone.
+"""One real try-on generation, end to end, without the phone.
 
 This is the paid test, and the only thing in the repo that spends money when you
 run it. One generation per invocation -- cents, not pounds, but not free, which
@@ -148,9 +148,9 @@ def main() -> int:
 
     print(f"OK  {elapsed:.1f}s   {mime_type}   {out.stat().st_size // 1024} KB")
     print(f"    {out}")
-    print("\n    Check the face and the background against the person photo --")
-    print("    they should be pixel-for-pixel unchanged. That is what CatVTON")
-    print("    guarantees by inpainting, and what the old version could not.")
+    print("\n    Check the face and background against the person photo, and the")
+    print("    garment against its own: collar, buttons, print and text are what")
+    print("    FASHN v1.6 is meant to preserve where the previous model lost them.")
     return 0
 
 

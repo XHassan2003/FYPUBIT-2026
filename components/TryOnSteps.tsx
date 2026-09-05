@@ -14,7 +14,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { colors, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
-import { Category, TRY_ON_CATEGORIES, WardrobeItem } from "@/data/mockWardrobe";
+import { bodySlot, Category, TRY_ON_CATEGORIES, WardrobeItem } from "@/data/mockWardrobe";
 import type { PhotoConcern } from "@/store/useTryOn";
 import { Button } from "./Button";
 import { Chip } from "./Chip";
@@ -38,12 +38,17 @@ const STEP_INDEX: Record<Step, number> = { photo: 0, item: 1, confirm: 2, genera
 /**
  * Not styling advice — these are the model's requirements, in plain words.
  *
- * CatVTON was trained on VITON-HD and DressCode, which are catalogue shots: one
- * person, head to foot, front on, plain background, in ordinary close-fitting
- * clothes. A photo outside that distribution gives the human parser a poor mask,
- * and a poor mask is what turns a shirt into a shapeless smear. It is not a
- * subtle effect — the same garment on a good photo and a bad one produced a
- * clean result in 11 seconds and a ruined one in 64.
+ * Try-on models want a catalogue shot of the wearer: one person, head to foot,
+ * front on, plain background, in ordinary close-fitting clothes. A photo outside
+ * that gives the model a poor read of the body, and that is what turns a shirt
+ * into a shapeless smear. It is not a subtle effect — the same garment on a good
+ * photo and a bad one produced a clean result in 11 seconds and a ruined one
+ * in 64.
+ *
+ * These are about the photograph of *you*, and they did not change when the
+ * model moved to FASHN v1.6. What FASHN relaxed is the garment side: a picture
+ * of someone else wearing the item now works as a reference, where before it
+ * had to be a flat-lay. That is a different image and none of these apply to it.
  *
  * Ordered by how much each actually changes the outcome, so someone who reads
  * only the first two still gets most of the benefit. The last is ordinary photo
@@ -203,21 +208,37 @@ interface ItemStepProps {
   items: WardrobeItem[];
   filter: Category | "all";
   onFilter: (next: Category | "all") => void;
-  selectedId?: string;
-  onSelect: (id: string) => void;
+  selected: WardrobeItem[];
+  onSelect: (item: WardrobeItem) => void;
   onContinue: () => void;
   onAddPiece: () => void;
+}
+
+/** What the current selection adds up to, in words, for the footer. */
+function describeOutfit(selected: WardrobeItem[]): string {
+  if (selected.length === 0) return "Nothing picked yet";
+  if (selected.length === 1) {
+    const only = selected[0];
+    return bodySlot(only) === "whole" ? `${only.name} — a whole look` : only.name;
+  }
+  // Ordered for reading rather than for rendering: people say "shirt and
+  // trousers", while the service runs the trousers first.
+  const upper = selected.find((piece) => bodySlot(piece) === "upper");
+  const lower = selected.find((piece) => bodySlot(piece) === "lower");
+  return [upper?.name, lower?.name].filter(Boolean).join(" + ");
 }
 
 export function ItemStep({
   items,
   filter,
   onFilter,
-  selectedId,
+  selected,
   onSelect,
   onContinue,
   onAddPiece,
 }: ItemStepProps) {
+  const selectedIds = new Set(selected.map((piece) => piece.id));
+
   return (
     <Animated.View entering={FadeIn.duration(320)}>
       <View style={styles.step}>
@@ -225,8 +246,8 @@ export function ItemStep({
         <Text style={[type.h1, styles.stepTitle]}>Choose your</Text>
         <Text style={[type.heroItalic, styles.stepTitleItalic]}>look.</Text>
         <Text style={[type.body, styles.stepBlurb]}>
-          Everything here is already yours. Pick the piece you want to see on you —
-          one at a time, and tops, bottoms or outerwear.
+          Everything here is already yours. Pick a top and a bottom for a whole outfit, or
+          a single piece on its own.
         </Text>
       </View>
 
@@ -265,15 +286,22 @@ export function ItemStep({
               key={item.id}
               item={item}
               index={index}
-              selected={item.id === selectedId}
-              onPress={() => onSelect(item.id)}
+              selected={selectedIds.has(item.id)}
+              onPress={() => onSelect(item)}
             />
           ))}
         </View>
       )}
 
       <View style={styles.stickyFoot}>
-        <Button label="Continue" onPress={onContinue} disabled={!selectedId} />
+        {/* Says what is picked, because with two selections the cards alone no
+            longer make it obvious — and because picking a second top silently
+            *replaces* the first rather than adding to it. Seeing the answer
+            change is how that rule explains itself. */}
+        <Text style={styles.outfitSummary} numberOfLines={1}>
+          {describeOutfit(selected)}
+        </Text>
+        <Button label="Continue" onPress={onContinue} disabled={selected.length === 0} />
       </View>
     </Animated.View>
   );
@@ -332,7 +360,7 @@ function ItemCard({
 
 interface ConfirmStepProps {
   photo: string;
-  item: WardrobeItem;
+  items: WardrobeItem[];
   /** Something detectably wrong with the photo — see `assessPhoto`. */
   concern?: PhotoConcern;
   onGenerate: () => void;
@@ -342,7 +370,7 @@ interface ConfirmStepProps {
 
 export function ConfirmStep({
   photo,
-  item,
+  items,
   concern,
   onGenerate,
   onChangePiece,
@@ -377,10 +405,22 @@ export function ConfirmStep({
           <Image source={{ uri: photo }} style={styles.pairImage} contentFit="cover" transition={300} />
           <Text style={[type.eyebrow, styles.pairLabel]}>You</Text>
         </View>
+        {/* Every chosen piece, not just the first. A two-piece outfit that
+            showed one garment here would be confirming something other than
+            what is about to be generated, which is the one thing this step
+            exists to prevent. */}
         <View style={styles.pairItem}>
-          <GarmentThumb item={item} style={styles.pairImage} />
+          <View style={styles.pairStack}>
+            {items.map((piece) => (
+              <GarmentThumb
+                key={piece.id}
+                item={piece}
+                style={items.length > 1 ? styles.pairImageStacked : styles.pairImage}
+              />
+            ))}
+          </View>
           <Text style={[type.eyebrow, styles.pairLabel]} numberOfLines={1}>
-            {item.brand ?? item.category}
+            {items.length > 1 ? `${items.length} pieces` : (items[0].brand ?? items[0].category)}
           </Text>
         </View>
         <View style={styles.pairPlus}>
@@ -389,14 +429,29 @@ export function ConfirmStep({
       </View>
 
       <View style={styles.confirmDetail}>
-        <Text style={type.h3}>{item.name}</Text>
-        <View style={styles.confirmMeta}>
-          <View style={[styles.confirmSwatch, { backgroundColor: item.color }]} />
-          <Text style={styles.confirmMetaLabel}>{item.colorName}</Text>
-          <View style={styles.confirmDivider} />
-          <Text style={styles.confirmMetaLabel}>{item.category}</Text>
-        </View>
+        {items.map((piece) => (
+          <View key={piece.id} style={styles.confirmPiece}>
+            <Text style={type.h3}>{piece.name}</Text>
+            <View style={styles.confirmMeta}>
+              <View style={[styles.confirmSwatch, { backgroundColor: piece.color }]} />
+              <Text style={styles.confirmMetaLabel}>{piece.colorName}</Text>
+              <View style={styles.confirmDivider} />
+              <Text style={styles.confirmMetaLabel}>{piece.category}</Text>
+            </View>
+          </View>
+        ))}
       </View>
+
+      {/* Said plainly, because it is the user's money. Each piece is a separate
+          pass through the model — a whole outfit costs and waits twice over,
+          and finding that out from the bill would be worse than reading it
+          here. */}
+      {items.length > 1 ? (
+        <Text style={[type.small, styles.confirmCost]}>
+          A full outfit is generated one piece at a time, so this takes about twice as long
+          as a single garment.
+        </Text>
+      ) : null}
 
       <Text style={[type.heroItalic, styles.confirmQuestion]}>Ready to see yourself in it?</Text>
 
@@ -409,7 +464,9 @@ export function ConfirmStep({
       </View>
 
       <Pressable onPress={onChangePiece} style={styles.confirmSwap} hitSlop={6}>
-        <Text style={styles.confirmSwapLabel}>Choose a different piece</Text>
+        <Text style={styles.confirmSwapLabel}>
+          {items.length > 1 ? "Change the pieces" : "Choose a different piece"}
+        </Text>
       </Pressable>
     </Animated.View>
   );
@@ -419,13 +476,13 @@ export function ConfirmStep({
 
 export function GeneratingStep({
   photo,
-  item,
+  items,
   stage,
   slow,
   onCancel,
 }: {
   photo?: string;
-  item?: WardrobeItem;
+  items?: WardrobeItem[];
   stage: number;
   /** The wait has run past what a straightforward photo takes. */
   slow?: boolean;
@@ -438,9 +495,11 @@ export function GeneratingStep({
           <Image source={{ uri: photo }} style={styles.scanImage} contentFit="cover" />
         ) : null}
         <ScanLine />
-        {item ? (
+        {items && items.length > 0 ? (
           <Animated.View entering={FadeInDown.duration(500).delay(200)} style={styles.scanGarment}>
-            <GarmentThumb item={item} style={styles.scanGarmentThumb} />
+            {items.map((piece) => (
+              <GarmentThumb key={piece.id} item={piece} style={styles.scanGarmentThumb} />
+            ))}
           </Animated.View>
         ) : null}
       </View>
@@ -532,10 +591,13 @@ interface ResultStepProps {
   photo?: string;
   showOriginal: boolean;
   onToggleOriginal: (showOriginal: boolean) => void;
-  item?: WardrobeItem;
+  items?: WardrobeItem[];
   saved: boolean;
+  /** Already copied into the phone's photo library. */
+  savedToDevice: boolean;
   onBack: () => void;
   onSave: () => void;
+  onSaveToDevice: () => void;
   onShare: () => void;
   onAnotherOutfit: () => void;
   onChangePhoto: () => void;
@@ -547,10 +609,12 @@ export function ResultStep({
   photo,
   showOriginal,
   onToggleOriginal,
-  item,
+  items,
   saved,
+  savedToDevice,
   onBack,
   onSave,
+  onSaveToDevice,
   onShare,
   onAnotherOutfit,
   onChangePhoto,
@@ -604,30 +668,70 @@ export function ResultStep({
         <Text style={[type.h1, styles.resultTitle]}>Your Atelier</Text>
         <Text style={[type.heroItalic, styles.resultTitleItalic]}>look.</Text>
 
-        {item ? (
-          <View style={styles.resultItemRow}>
-            <View style={[styles.resultSwatch, { backgroundColor: item.color }]} />
+        {/* One row per piece, so a full outfit credits both garments rather
+            than naming whichever happened to be first. */}
+        {(items ?? []).map((piece) => (
+          <View key={piece.id} style={styles.resultItemRow}>
+            <View style={[styles.resultSwatch, { backgroundColor: piece.color }]} />
             <Text style={styles.resultItemLabel}>
-              <Text style={styles.resultItemName}>{item.name}</Text>
-              {` · ${item.brand ?? item.category}`}
+              <Text style={styles.resultItemName}>{piece.name}</Text>
+              {` · ${piece.brand ?? piece.category}`}
             </Text>
           </View>
-        ) : null}
+        ))}
 
+        {/* Two saves, side by side, because they are genuinely different and
+            the difference is not obvious from the words alone. "Save look"
+            files it in the app's own Looks — app storage, gone when the app is.
+            "To photos" copies the image into the phone's library, where it
+            outlives the app entirely. That matters more than it sounds: the
+            generated file itself sits in the cache directory, which the OS is
+            free to empty whenever it likes, so this is the only one of the two
+            that makes a look permanent. */}
         <View style={styles.resultSave}>
           <Pressable
             onPress={onSave}
             disabled={saved}
             accessibilityRole="button"
-            style={({ pressed }) => [styles.saveButton, pressed && !saved && styles.pressed, saved && styles.saveButtonDone]}
+            style={({ pressed }) => [
+              styles.saveButton,
+              styles.saveButtonHalf,
+              pressed && !saved && styles.pressed,
+              saved && styles.saveButtonDone,
+            ]}
           >
             <Ionicons
               name={saved ? "checkmark" : "bookmark-outline"}
               size={14}
               color={saved ? colors.smoke : colors.ink}
             />
-            <Text style={[styles.saveLabel, saved && styles.saveLabelDone]}>
-              {saved ? "Saved to your looks" : "Save look"}
+            <Text style={[styles.saveLabel, saved && styles.saveLabelDone]} numberOfLines={1}>
+              {saved ? "In your looks" : "Save look"}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onSaveToDevice}
+            disabled={savedToDevice}
+            accessibilityRole="button"
+            accessibilityLabel="Save to your phone's photos"
+            style={({ pressed }) => [
+              styles.saveButton,
+              styles.saveButtonHalf,
+              pressed && !savedToDevice && styles.pressed,
+              savedToDevice && styles.saveButtonDone,
+            ]}
+          >
+            <Ionicons
+              name={savedToDevice ? "checkmark" : "download-outline"}
+              size={14}
+              color={savedToDevice ? colors.smoke : colors.ink}
+            />
+            <Text
+              style={[styles.saveLabel, savedToDevice && styles.saveLabelDone]}
+              numberOfLines={1}
+            >
+              {savedToDevice ? "In your photos" : "To photos"}
             </Text>
           </Pressable>
         </View>
@@ -960,7 +1064,9 @@ const styles = StyleSheet.create({
   resultItemLabel: { flex: 1, fontFamily: type.body.fontFamily, fontSize: 12.5, color: paperAlpha.a60 },
   resultItemName: { color: colors.paper },
 
-  resultSave: { marginTop: spacing.xl },
+  // Two buttons where there was one, so the row splits the width between them.
+  resultSave: { marginTop: spacing.xl, flexDirection: "row", gap: spacing.md },
+  saveButtonHalf: { flex: 1 },
   saveButton: {
     height: 56,
     flexDirection: "row",
@@ -1038,6 +1144,33 @@ const styles = StyleSheet.create({
   concernBody: { flex: 1, gap: spacing.xs },
   concernHeadline: { fontFamily: type.h3.fontFamily, fontSize: 14, color: colors.ink },
   concernAdvice: { color: colors.smoke },
+  // Two garments side by side where there used to be one. Each takes an equal
+  // share of the width, and keeping the aspect ratio means the row stays the
+  // same height as the "You" panel beside it whether it holds one piece or two.
+  pairStack: { flexDirection: "row", gap: spacing.xs },
+  pairImageStacked: {
+    flex: 1,
+    aspectRatio: 3 / 4,
+    backgroundColor: colors.sand,
+  },
+
+  outfitSummary: {
+    marginBottom: spacing.md,
+    textAlign: "center",
+    fontFamily: type.body.fontFamily,
+    fontSize: 12,
+    color: colors.smoke,
+  },
+
+  confirmPiece: { marginBottom: spacing.md },
+  confirmCost: {
+    marginTop: spacing.lg,
+    maxWidth: 300,
+    alignSelf: "center",
+    textAlign: "center",
+    color: colors.smoke,
+  },
+
   generatingSlow: {
     marginTop: spacing.lg,
     maxWidth: 300,

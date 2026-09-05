@@ -14,7 +14,7 @@ import {
   TryOnHeader,
 } from "@/components/TryOnSteps";
 import { colors, spacing } from "@/constants/theme";
-import { canTryOn, Category, Occasion } from "@/data/mockWardrobe";
+import { canTryOn, Category, Occasion, WardrobeItem } from "@/data/mockWardrobe";
 import { useTryOn } from "@/store/useTryOn";
 import { useWardrobe } from "@/store/useWardrobe";
 
@@ -60,15 +60,16 @@ export default function TryOnScreen() {
   // Shared with Home, so a photo or a piece chosen there is already chosen here.
   const photo = useTryOn((state) => state.photo);
   const photoConcern = useTryOn((state) => state.photoConcern);
-  const itemId = useTryOn((state) => state.itemId);
+  const itemIds = useTryOn((state) => state.itemIds);
   const result = useTryOn((state) => state.result);
   const error = useTryOn((state) => state.error);
   const clearError = useTryOn((state) => state.clearError);
   const pickPhoto = useTryOn((state) => state.pickPhoto);
   const useSamplePhoto = useTryOn((state) => state.useSamplePhoto);
-  const setItemId = useTryOn((state) => state.setItemId);
+  const toggleItem = useTryOn((state) => state.toggleItem);
   const generate = useTryOn((state) => state.generate);
   const share = useTryOn((state) => state.share);
+  const saveToDevice = useTryOn((state) => state.saveToDevice);
   const changePhoto = useTryOn((state) => state.changePhoto);
 
   // Home opens the flow at whichever step is still unanswered, but never past
@@ -77,7 +78,12 @@ export default function TryOnScreen() {
   const [step, setStep] = useState<Step>(() => {
     const requested = params.step as Step | undefined;
     if (requested === "result" && useTryOn.getState().result) return "result";
-    if (requested === "confirm" && useTryOn.getState().photo && useTryOn.getState().itemId) return "confirm";
+    if (
+      requested === "confirm" &&
+      useTryOn.getState().photo &&
+      useTryOn.getState().itemIds.length > 0
+    )
+      return "confirm";
     if (requested === "item" && useTryOn.getState().photo) return "item";
     return "photo";
   });
@@ -85,18 +91,28 @@ export default function TryOnScreen() {
   const [stage, setStage] = useState(0);
   const [showOriginal, setShowOriginal] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savedToDevice, setSavedToDevice] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   // Only pieces the model can actually wear: it works from images, so a
-  // silhouette tells it nothing, and it fits tops, bottoms and outerwear only.
-  // See `canTryOn` — shoes and accessories are outside what CatVTON was
-  // trained on, and offering them here would sell a refusal as a feature.
+  // silhouette tells it nothing, and it knows tops, bottoms and one-pieces.
+  // See `canTryOn` — shoes and accessories are not categories the model has,
+  // and offering them here would sell a refusal as a feature.
   const wearable = useMemo(() => wardrobe.filter(canTryOn), [wardrobe]);
   const filtered = useMemo(
     () => (filter === "all" ? wearable : wearable.filter((piece) => piece.category === filter)),
     [wearable, filter]
   );
-  const item = useMemo(() => wearable.find((piece) => piece.id === itemId), [wearable, itemId]);
+  // Selection resolved back to items, and in the order it was chosen. Anything
+  // whose id no longer matches a wearable piece drops out — the wardrobe can
+  // change under a selection that Home made.
+  const selected = useMemo(
+    () =>
+      itemIds
+        .map((id) => wearable.find((piece) => piece.id === id))
+        .filter((piece): piece is WardrobeItem => piece !== undefined),
+    [wearable, itemIds]
+  );
 
   useEffect(() => {
     if (step !== "generating") return;
@@ -115,21 +131,26 @@ export default function TryOnScreen() {
   }, [toast]);
 
   const run = async () => {
-    if (!item) return;
+    if (selected.length === 0) return;
     setStep("generating");
     setSaved(false);
+    setSavedToDevice(false);
     setShowOriginal(false);
 
-    const uri = await generate(item);
+    const uri = await generate(selected);
     // A failure drops back to the confirmation rather than a dead end, with
-    // the photo and the piece still chosen so it is one tap to try again.
+    // the photo and the pieces still chosen so it is one tap to try again.
     setStep(uri ? "result" : "confirm");
   };
 
   const onSave = () => {
-    if (!result || !item) return;
-    const occasion = (params.occasion as Occasion) ?? item.occasions[0] ?? "casual";
-    saveOutfit([item.id], occasion, result);
+    if (!result || selected.length === 0) return;
+    const occasion = (params.occasion as Occasion) ?? selected[0].occasions[0] ?? "casual";
+    saveOutfit(
+      selected.map((piece) => piece.id),
+      occasion,
+      result
+    );
     setSaved(true);
     setToast("Saved to your looks");
   };
@@ -139,9 +160,20 @@ export default function TryOnScreen() {
     setToast("Opening share…");
   };
 
+  const onSaveToDevice = async () => {
+    // Only mark it done when it actually landed. A denied permission or a
+    // failed write sets `error`, which the header already shows — claiming
+    // success on top of that would be the app telling two different stories.
+    if (await saveToDevice()) {
+      setSavedToDevice(true);
+      setToast("Saved to your photos");
+    }
+  };
+
   const onChangePhoto = () => {
     changePhoto();
     setSaved(false);
+    setSavedToDevice(false);
     setStep("photo");
   };
 
@@ -163,13 +195,16 @@ export default function TryOnScreen() {
             photo={photo}
             showOriginal={showOriginal}
             onToggleOriginal={setShowOriginal}
-            item={item}
+            items={selected}
             saved={saved}
+            savedToDevice={savedToDevice}
             onBack={back}
             onSave={onSave}
+            onSaveToDevice={onSaveToDevice}
             onShare={onShare}
             onAnotherOutfit={() => {
               setSaved(false);
+              setSavedToDevice(false);
               setStep("item");
             }}
             onChangePhoto={onChangePhoto}
@@ -190,7 +225,7 @@ export default function TryOnScreen() {
       {step === "generating" ? (
         <GeneratingStep
           photo={photo}
-          item={item}
+          items={selected}
           stage={stage}
           slow={stage >= SLOW_AFTER_TICKS}
           onCancel={() => setStep("confirm")}
@@ -211,17 +246,17 @@ export default function TryOnScreen() {
               items={filtered}
               filter={filter}
               onFilter={setFilter}
-              selectedId={itemId}
-              onSelect={setItemId}
+              selected={selected}
+              onSelect={(piece) => toggleItem(piece, selected)}
               onContinue={() => setStep("confirm")}
               onAddPiece={() => router.push("/add-item")}
             />
           ) : null}
 
-          {step === "confirm" && photo && item ? (
+          {step === "confirm" && photo && selected.length > 0 ? (
             <ConfirmStep
               photo={photo}
-              item={item}
+              items={selected}
               concern={photoConcern}
               onGenerate={run}
               onChangePiece={() => setStep("item")}

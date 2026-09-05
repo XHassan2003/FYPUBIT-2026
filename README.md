@@ -1,4 +1,4 @@
-# AI Personal Stylist — frontend
+﻿# AI Personal Stylist — frontend
 
 Seven working screens (Home, Style, Wardrobe, Looks, Profile, Add Piece, Colour
 Quiz) plus the virtual try-on flow, all reading from one shared store, behind
@@ -137,15 +137,19 @@ npm test
 ```
 
 `npm test` is Jest, through the `jest-expo` preset so React Native and Expo
-modules resolve the way they do on a device. There is one suite so far —
-`store/__tests__/useTryOn.test.ts`, covering the photo check on step three of
-the try-on flow, which is pure arithmetic guarding a paid API call and exactly
-the kind of thing that breaks quietly. The Python service has its own suite; see
+modules resolve the way they do on a device. Two suites:
+`store/__tests__/useTryOn.test.ts` covers the photo check on step three of the
+try-on flow, and `data/__tests__/mockWardrobe.test.ts` guards the seed — both
+are pure logic sitting in front of a paid API call, and exactly the kind of
+thing that breaks quietly. The Python service has its own suite; see
 [service/README.md](service/README.md#tests).
 
-`jest.setup.js` swaps AsyncStorage for the in-memory mock the library ships.
-Without it, anything importing a store fails at import, because AsyncStorage is
-a native module and there is no device under Jest.
+`jest.setup.js` stands in for the native modules that only exist on a device —
+AsyncStorage and expo-media-library. Without it, anything importing a store
+fails at *import*, which is worth knowing because of how it looks: not a red
+failure naming the cause, but a suite quietly vanishing from the run. Adding
+"save to photos" took the count from 16 tests to 5 that way. If a number here
+drops without a matching failure, suspect a new native import first.
 
 If you touched anything under `service/`, run its suite too — from that folder,
 and it takes under a second:
@@ -180,6 +184,7 @@ data/colorSeasons.ts     four seasonal palettes, the quiz questions, computeSeas
 store/useWardrobe.ts     zustand + persist — items, outfits, profile, suggestOutfit(), matchItemToProfile()
 store/useTryOn.ts        the try-on in progress — shared by Home and the flow, not persisted
 store/__tests__/useTryOn.test.ts  the photo check on step three, both sides of every threshold
+data/__tests__/mockWardrobe.test.ts  the seed, and that RETIRED_SEED_IDS cannot delete a live piece
 jest.setup.js            stands in for the native modules Jest has no device for
 hooks/useDisplayName.ts  Clerk's name for the Style greeting and the Profile heading
 hooks/useGarmentAnalysis.ts  pick, resize and read a garment photo
@@ -337,30 +342,52 @@ Three rules it follows, all worth keeping if the model behind it changes:
 Swapping in OpenCV and YOLO later is a change to `service/vision.py` alone —
 the endpoint, the shapes and the app wiring stay as they are.
 
-**Virtual try-on is built too**, on **CatVTON** — a model built for try-on, not
-a general image model asked to imitate one. "Try it on" in the Builder opens a
+**Virtual try-on is built too**, on **FASHN Virtual Try-On v1.6** — a model
+built for try-on, not a general image model asked to imitate one. "Try it on" in the Builder opens a
 five-step flow: your photograph, the piece you want to see, a last look at both,
 the wait, and the result. `app/try-on.tsx` holds the order things happen in,
 `components/TryOnSteps.tsx` the drawing, `store/useTryOn.ts` the work — picking,
 resizing, encoding, and writing the result to a file so it can be shared and
 saved against the look.
 
-CatVTON treats try-on as **inpainting**: only the garment region is
-regenerated, so the face, hair, pose and background come through untouched. That
-is the whole reason it replaced the earlier Gemini implementation, which
-composed a *new* photograph from references and could not promise the output
-contained the same person as the input.
+Only the garment region is regenerated, so the face, hair, pose and background
+come through untouched — the thing the earlier Gemini implementation could not
+promise, because it composed a *new* photograph from references with nothing
+requiring the same person to come out the other side.
+
+**The garment picture can be a photo of someone else wearing the item.** That is
+what v1.6 buys over the CatVTON version that preceded it, and it is the
+difference between "clothes I have photographed on a hanger" and "any garment
+picture from a shop's website or a search result". The same lilac shalwar kameez
+that came back as a shapeless drape under CatVTON now renders with its
+embroidery legible, in 19 seconds rather than 64.
 
 It runs hosted on fal, so it needs a `FAL_KEY` in `service/.env` and no GPU.
-See [service/README.md](service/README.md#how-the-try-on-works) for the method,
-the cloth-type mapping and why it is hosted rather than local.
+See [service/README.md](service/README.md#how-the-try-on-works) for the model
+history, the category mapping and the arguments it is called with.
 
-**Two limits, and both are the model rather than the app.** It fits **one
-garment per pass**, and it fits **tops, bottoms and outerwear only** — it was
-trained on VITON-HD and DressCode, which have no notion of shoes or bags. The
-picker offers exactly what can be worn rather than letting someone choose a
-piece that would be refused. A piece also needs **a photograph**: a silhouette
-tells the model nothing.
+The result screen offers **two different saves**, and the difference matters:
+*Save look* files it in the app's own Looks, which lives in app storage; *To
+photos* copies the image into the phone's photo library. Only the second makes
+a look permanent — the generated file sits in the cache directory, which the OS
+empties whenever it likes. Saving to photos asks for add-only permission, so
+the prompt is the small one and declining full library access still works.
+
+**Whole outfits work** — pick a top and a bottom and both go on. The model fits
+one region per call, so this is two chained passes: the bottom half first, then
+the top over it. That means **two generations, billed and waited for**, and the
+confirm step says so before you spend them.
+
+**Limits, and they are the model rather than the app.** It knows **tops,
+bottoms and one-pieces only** — shoes and bags are not categories it has. One
+garment per part of the body, so a shirt and a coat cannot both go on, and a
+kameez is worn alone. A piece also needs **a photograph**: a silhouette tells
+the model nothing. The picker enforces all of this rather than letting someone
+choose a combination that would be refused.
+
+⚠️ **One thing got worse in the swap.** CatVTON had a dedicated outerwear type
+that layered a coat *over* what was already worn. FASHN has no equivalent, so a
+coat is filed as a top and **replaces** the shirt rather than going over it.
 
 Still worth describing carefully, just for different reasons than before. This
 is a real try-on model and the garment does survive onto the body — but it is
@@ -375,7 +402,7 @@ Done:
 - All seven screens plus the try-on flow, wired to the shared store
 - Virtual try-on moved to the centre of the app: Home is the landing, and the
   tab bar's raised button opens it from anywhere
-- Virtual try-on moved off Gemini onto **CatVTON**, a purpose-built try-on
+- Virtual try-on moved off Gemini onto a purpose-built try-on model, now **FASHN v1.6**
   model — inpainting rather than composition, so the wearer's face, hair, pose
   and background survive. Run end to end against fal on a real photograph:
   ~11s per generation, identity and background held, garment applied cleanly
@@ -424,7 +451,7 @@ retailer product photos belong to the retailer and cannot go in a submitted
 project.
 
 They are also **better input**. A garment laid flat or hung against a plain wall
-is the reference CatVTON was trained on, and it beats every editorial photo in
+is the cleanest reference the model can get, and it beats every editorial photo in
 the seed wardrobe. The South Asian formalwear in there is the weakest set of
 garments in the app precisely because those are pictures of *people* rather than
 pictures of *clothes*.
@@ -496,6 +523,12 @@ newer on npm is a 58 canary. It goes away when Expo fixes it.
   extremes slightly more often. It is variance rather than bias, and it is the
   behaviour the two-piece shape has always had, but it does mean a dress wins
   the top slot a little more often than its average quality alone would earn.
+- **A fresh install has no tops.** The ten seeded ones were withdrawn (see
+  `RETIRED_SEED_IDS`) because ten shortlist slots per category meant stock
+  photographs crowded out the wearer's own shirts on every recommendation. The
+  wardrobe still assembles outfits from bottoms and shoes, but until someone
+  adds a top of their own, a look comes back without one. If this is being
+  demonstrated on a device that has never had clothes added, add a couple first.
 - **The seeded wardrobe is stock photography, not anyone's real clothes.** The
   strongest version of this demo is your own wardrobe, and
   `service/tools/import_wardrobe.py` exists to make that a five-minute job —
@@ -511,7 +544,7 @@ newer on npm is a 58 canary. It goes away when Expo fixes it.
   biggest quality improvement available to this feature.
 - Virtual try-on is **sensitive to the input photograph**, more than anything
   else in the app. One person, head to foot, front on, plain background, no
-  bulky coat — that is what CatVTON was trained on, and a photo that breaks
+  bulky coat — that is what the model expects of the wearer, and a photo that breaks
   those rules produces a shapeless smear rather than a garment. The bundled
   sample obeys them and step one of the flow spells them out. Step three warns
   before generating, but **only about what the pixel dimensions give away** — a
@@ -521,6 +554,12 @@ newer on npm is a 58 canary. It goes away when Expo fixes it.
   are the things that actually spoil a result. The 928x1152 editorial photo that
   produced the smeared coat passes every check silently. **No warning is not a
   verdict that the photo is good**, and the UI is careful not to imply it is.
+- **A loud all-over print is the failure case for a two-piece outfit.** Chaining
+  means the second pass paints onto the first pass's *output*, so a mistake has
+  nothing downstream to correct it — errors accumulate rather than average out.
+  A dip-dye shirt tried with jeans put the shirt's print down the trouser legs;
+  the same photograph with a plain polo and plain trousers came back clean. Demo
+  full outfits with ordinary clothes, and single garments for anything loud.
 - Garment **fine detail does not fully survive**. An Oxford shirt comes back the
   right colour and roughly the right shape, but the collar and buttons are lost.
   Colour and silhouette transfer well; structure does not. Say "see how it

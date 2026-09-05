@@ -16,7 +16,7 @@
 // Khaadi, Sapphire, J., Outfitters and the rest are those companies' copyrighted
 // work, and shipping them in a submitted project is not defensible. Your own are
 // also simply better input: a kameez laid flat or hung against a plain wall is
-// the reference CatVTON was trained on, and it beats the editorial photographs
+// the cleanest reference the model can get, and it beats the editorial photographs
 // in the seed wardrobe — which are the weakest garments in there precisely
 // because they are pictures of people rather than pictures of clothes.
 

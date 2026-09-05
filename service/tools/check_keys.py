@@ -18,7 +18,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 SERVICE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SERVICE))
 load_dotenv(SERVICE / ".env")
+
+# Imported for `MODEL` alone, so the key is checked against the endpoint the
+# service actually calls. Hardcoding it here meant that when the try-on model
+# was swapped this quietly went on scoping its probe to the old one.
+import tryon  # noqa: E402
 
 
 def report(label: str, ok: bool, detail: str) -> bool:
@@ -59,7 +65,7 @@ def check_fal() -> bool:
         response = httpx.post(
             "https://rest.alpha.fal.ai/tokens/",
             headers={"Authorization": f"Key {key}", "Content-Type": "application/json"},
-            json={"allowed_apps": ["fal-ai/cat-vton"], "token_expiration": 60},
+            json={"allowed_apps": [tryon.MODEL], "token_expiration": 60},
             timeout=30,
         )
     except Exception as err:  # noqa: BLE001

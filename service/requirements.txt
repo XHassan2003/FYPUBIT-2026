@@ -4,7 +4,7 @@ pydantic>=2.7,<3.0
 # Garment photo analysis. 2.3+ is what supports Pydantic/JSON schemas for
 # structured output.
 google-genai>=2.3,<3.0
-# Virtual try-on: CatVTON, hosted (see tryon.py). Handles fal's request queue —
+# Virtual try-on: FASHN v1.6, hosted (see tryon.py). Handles fal's request queue —
 # submit, poll, collect — so this service does not have to.
 fal-client>=0.5,<1.0
 # Fetching the generated image back off fal's CDN so /try-on can return bytes

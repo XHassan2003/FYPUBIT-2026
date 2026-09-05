@@ -7,6 +7,7 @@ import {
   Category,
   OCCASIONS,
   Occasion,
+  RETIRED_SEED_IDS,
   WardrobeItem,
   mockWardrobe,
   colorPairings,
@@ -595,8 +596,30 @@ export const useWardrobe = create<WardrobeState>()(
       storage: createJSONStorage(() => AsyncStorage),
       // Bump this and add a `migrate` when the persisted shape changes, so an
       // installed app doesn't rehydrate into a state its code no longer expects.
-      version: 2,
+      version: 3,
       partialize: (state) => ({ items: state.items, outfits: state.outfits, profile: state.profile }),
+      /**
+       * v2 → v3: drop the seeded tops from a wardrobe that already saved them.
+       *
+       * `merge` below adds missing seed pieces but never removes anything, and
+       * it cannot: it has no way to tell a piece the user deleted on purpose
+       * from one that was retired upstream. So removals go here, where the
+       * version number says explicitly that this runs once and only once.
+       *
+       * Only the ids in `RETIRED_SEED_IDS` are touched. Anything the user added
+       * is untouched by construction — the app names those
+       * `${category}-${Date.now()}`, which cannot collide with `top-1`.
+       */
+      migrate: (persisted, version) => {
+        const state = persisted as PersistedWardrobe;
+        if (version >= 3) return state;
+
+        const retired = new Set(RETIRED_SEED_IDS);
+        return {
+          ...state,
+          items: (state?.items ?? []).filter((item) => !retired.has(item.id)),
+        };
+      },
       /**
        * Reconcile the saved wardrobe with the seed on every launch.
        *

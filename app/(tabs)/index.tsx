@@ -8,7 +8,7 @@ import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { GarmentThumb } from "@/components/GarmentThumb";
 import { Screen } from "@/components/Screen";
 import { colors, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
-import { canTryOn } from "@/data/mockWardrobe";
+import { canTryOn, WardrobeItem } from "@/data/mockWardrobe";
 import { useDisplayName } from "@/hooks/useDisplayName";
 import { useTryOn } from "@/store/useTryOn";
 import { useWardrobe } from "@/store/useWardrobe";
@@ -41,23 +41,31 @@ export default function HomeScreen() {
   const displayName = useDisplayName();
 
   const photo = useTryOn((state) => state.photo);
-  const itemId = useTryOn((state) => state.itemId);
+  const itemIds = useTryOn((state) => state.itemIds);
   const result = useTryOn((state) => state.result);
   const pickPhoto = useTryOn((state) => state.pickPhoto);
   const useSamplePhoto = useTryOn((state) => state.useSamplePhoto);
-  const setItemId = useTryOn((state) => state.setItemId);
+  const toggleItem = useTryOn((state) => state.toggleItem);
 
   // Only pieces the try-on model can wear — a photograph to work from, and a
   // category it was trained on. Same rule as the flow itself, so the rail here
   // never offers a piece that step two would drop.
   const wearable = useMemo(() => items.filter(canTryOn), [items]);
   const rail = useMemo(() => wearable.slice(0, RAIL_LENGTH), [wearable]);
-  const item = useMemo(() => wearable.find((piece) => piece.id === itemId), [wearable, itemId]);
+  // The rail selects into the same outfit the flow does, so tapping a top here
+  // and a bottom in step two builds one look rather than two competing ones.
+  const selected = useMemo(
+    () =>
+      itemIds
+        .map((id) => wearable.find((piece) => piece.id === id))
+        .filter((piece): piece is WardrobeItem => piece !== undefined),
+    [wearable, itemIds]
+  );
 
   /** Opens the flow at the first thing still missing. */
   const openFlow = () => {
-    const step = !photo ? "photo" : !itemId ? "item" : "confirm";
-    router.push({ pathname: "/try-on", params: { step, item: itemId } });
+    const step = !photo ? "photo" : selected.length === 0 ? "item" : "confirm";
+    router.push({ pathname: "/try-on", params: { step } });
   };
 
   return (
@@ -171,19 +179,19 @@ export default function HomeScreen() {
         style={styles.railScroll}
       >
         {rail.map((option) => {
-          const selected = option.id === itemId;
+          const isPicked = selected.some((piece) => piece.id === option.id);
           return (
             <Pressable
               key={option.id}
-              onPress={() => setItemId(option.id)}
+              onPress={() => toggleItem(option, selected)}
               accessibilityRole="button"
-              accessibilityState={{ selected }}
+              accessibilityState={{ selected: isPicked }}
               style={styles.railItem}
             >
-              <View style={[styles.railRing, selected && styles.railRingOn]}>
+              <View style={[styles.railRing, isPicked && styles.railRingOn]}>
                 <View style={styles.railThumbWrap}>
                   <GarmentThumb item={option} style={styles.railThumb} />
-                  {selected ? (
+                  {isPicked ? (
                     <Animated.View entering={FadeIn.duration(180)} style={styles.railCheck}>
                       <Ionicons name="checkmark" size={12} color={colors.paper} />
                     </Animated.View>
@@ -211,8 +219,8 @@ export default function HomeScreen() {
           <Text style={styles.ctaLabel}>See yourself in it</Text>
         </Pressable>
         <Text style={[type.small, styles.ctaNote]}>
-          {photo && item
-            ? `${item.name} · ready to preview`
+          {photo && selected.length > 0
+            ? `${selected.map((piece) => piece.name).join(" + ")} · ready to preview`
             : "Add a photo and pick a piece — we take it from there."}
         </Text>
       </View>

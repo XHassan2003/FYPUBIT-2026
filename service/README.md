@@ -1,10 +1,10 @@
-# Recommendation service
+﻿# Recommendation service
 
 The Python half of the project. Five endpoints, all doing real work now:
 `/match` scores one garment against the user's seasonal palette and
 `/recommend` assembles a whole outfit, both measuring colour in CIE Lab rather
 than looking it up in a table; `/analyse` reads a garment out of a photograph;
-and `/try-on` fits one onto the wearer with CatVTON.
+and `/try-on` fits one onto the wearer with FASHN v1.6.
 
 ## Setup
 
@@ -36,7 +36,7 @@ cp .env.example .env
 | Key | Endpoint | Where from |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | `POST /analyse` — reading a garment from a photo | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| `FAL_KEY` | `POST /try-on` — CatVTON | [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys) |
+| `FAL_KEY` | `POST /try-on` — FASHN v1.6 | [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys) |
 
 Both are **secrets**, unlike the app's Clerk publishable key. That is why these
 calls live here rather than in the app: anything named `EXPO_PUBLIC_*` is
@@ -145,7 +145,7 @@ abstains and the outfit is chosen on harmony and occasion alone.
 {
   "image": "<base64, no data: prefix>",
   "mimeType": "image/jpeg",
-  "categories": ["tops", "bottoms", "outerwear", "shoes", "accessories"],
+  "categories": ["tops", "bottoms", "dresses", "outerwear", "shoes", "accessories"],
   "occasions": ["work", "casual", "date night", "workout", "formal"],
   "swatches": [{ "hex": "#B08968", "name": "camel" }]
 }
@@ -192,9 +192,11 @@ now — it is not a label for a prompt any more. Only `tops`, `bottoms`,
 name, for free, because the model was never trained on them.
 
 ⚠️ **This is the expensive endpoint** — a diffusion model, not a read. The app
-allows it 120 seconds (`TRY_ON_TIMEOUT_MS`) against roughly 25 for analysis,
-and the service gives up at 100 (`CLIENT_TIMEOUT_S`) so that it is the one that
-explains why rather than the phone timing out on silence.
+allows it 270 seconds (`TRY_ON_TIMEOUT_MS`) against roughly 25 for analysis, and
+the service gives up at 240 (`CLIENT_TIMEOUT_S`) so that it is the one that
+explains why rather than the phone timing out on silence. Both are generous on
+purpose: giving up does not cancel the job, which keeps running on fal and is
+billed either way, so a tight ceiling spends the money and discards the result.
 
 Note the response is **PNG**, which is what fal returns. The app reads
 `mimeType` rather than assuming — a PNG named `.jpg` is a file some share
@@ -202,61 +204,130 @@ targets refuse to open.
 
 ### How the try-on works
 
-`tryon.py`. **CatVTON** (Chong et al., [ICLR 2025](https://arxiv.org/abs/2407.15886)),
-hosted on fal as `fal-ai/cat-vton`.
+`tryon.py`. **FASHN Virtual Try-On v1.6**, hosted on fal as
+`fal-ai/fashn/tryon/v1.6`.
 
-The idea behind the paper is that try-on does not need the machinery everyone
-had been putting around it. There is no warping module, no pose encoder, no
-ReferenceNet and no text branch: the garment and the person are **concatenated
-along the spatial dimension** and handed to a single denoising UNet, which is
-left to work out the correspondence itself. 899M parameters in total, 49.6M of
-them trainable.
+### Why this model, and what it replaced
 
-The consequence that matters here is that it is **inpainting, not generation**.
-Only the masked garment region is regenerated; every pixel outside it — the
-face, the hair, the background, the pose — is carried through untouched. That is
-a guarantee the previous implementation could not make, and the reason for the
-swap.
+Three models have held this endpoint, and each swap fixed a specific failure.
 
-**This replaced Gemini,** and the contrast is worth stating plainly because the
-old version's honesty note is now redundant. `/try-on` used to ask
-`gemini-3.1-flash-image` to compose a *new* photograph from reference images.
-That is a different job with a different failure mode: the result looked
-*plausible* rather than *accurate*, and faces drifted, because nothing in the
-method required the output to contain the same person as the input. It was
-enough to demonstrate the idea and not enough to judge whether a coat fits.
+**Gemini** composed a new photograph from references — plausible rather than
+accurate, and faces drifted, because nothing in the method required the output
+to contain the same person as the input.
 
-**Hosted, not local.** One HTTPS call, no GPU, no CUDA, no detectron2 — which
-matters, because the automatic-masking path in the reference implementation
-needs detectron2 and SCHP, and building those on Windows is its own project. The
-trade is a per-generation cost and a network dependency, which is the trade the
-endpoint already made with Gemini, so nothing about the deployment changed.
+**CatVTON** ([ICLR 2025](https://arxiv.org/abs/2407.15886)) fixed that by
+treating try-on as inpainting: only the masked garment region is regenerated, so
+face, hair, pose and background survive untouched. A real try-on model and a
+large step up. Two things kept biting:
 
-**What it cannot do**, both enforced before a request is sent:
+- It wants the garment as a **flat product shot**. Handed a photograph of a
+  *person wearing* the item it has to separate garment from wearer first, and
+  the result came back smeared. That ruled out most garment pictures on the
+  internet, and it is why the South Asian formalwear in the seed wardrobe read
+  worse than the hanger-shot shirts beside it.
+- 768x1024, and fine detail did not survive — an Oxford shirt came back the
+  right colour and shape with no collar and no buttons.
 
-- **One garment per pass.** It fits a single masked region. Chaining passes to
-  keep the old six-garment API was considered and rejected: the second pass
-  treats the first pass's output as a photograph, so every artifact is baked in
-  and re-inpainted, and cost and latency multiply. The app only ever sent one
-  garment anyway.
-- **Clothes only.** Trained on VITON-HD and DressCode — upper body, lower body,
-  dresses. Shoes, bags and jewellery are not in the label space, so there is no
-  prompt or setting that would make it try. `CLOTH_TYPES` is a whitelist:
+**FASHN v1.6** targets both. It is trained to preserve garment text and print,
+and it takes a `garment_photo_type` control that accepts **on-model photographs
+as well as flat-lay** ones. That second point is the reason for the swap: a
+garment picture from a retailer's site or a search result now works as a
+reference, instead of only clothes photographed on a hanger.
 
-  | wardrobe category | CatVTON `cloth_type` |
+Measured on the same lilac shalwar kameez — an editorial photo of a model
+wearing it, the exact case CatVTON was worst at:
+
+| | CatVTON | FASHN v1.6 |
+| --- | --- | --- |
+| result | shapeless drape, hand smeared | correct colour, embroidery legible, full-length one-piece |
+| time | 64s | 19s |
+| output | 768x1024 | 1024x1280 |
+
+**⚠️ The documented output size is wrong.** fal says 864x1296. Measured, two
+runs against a 1024-wide person photograph both returned **1024x1280** — the
+person image's own size. The output tracks the input, so `PERSON_EDGE` in
+`store/useTryOn.ts` is what actually sets the resolution. The lever is on the
+app side, not here.
+
+**Hosted, not local.** One HTTPS call, no GPU, no CUDA. The trade is a
+per-generation cost and a network dependency, which is the trade this endpoint
+already made with Gemini, so nothing about the deployment changed.
+
+### The knobs that are set, and why
+
+| argument | value | reasoning |
+| --- | --- | --- |
+| `mode` | `quality` | fal defaults to `balanced`. Accuracy is the reason for being on this model at all, so the slower path is the point. Drop to `balanced` if generations feel long; `performance` gives up most of what was gained. |
+| `garment_photo_type` | `auto` | Both kinds are in play and the app cannot tell them apart — the seed mixes hanger shots with editorial photos, imported clothes are flat-lays, and anything saved off a shop's site is on a model. Pinning either value would ruin the other half. |
+| `category` | from the wardrobe | FASHN offers `auto`, which infers from the image. Deliberately unused: the wardrobe already *knows* what each piece is, and letting the model re-guess trades a fact for a prediction that is wrong expensively and silently. |
+| `output_format` | `png` | Lossless. The point of this model is that fine detail survives; re-encoding to JPEG would spend the quality just paid for. |
+
+### Whole outfits, by chaining
+
+A top **and** a bottom, which the model cannot do in one call. Two passes: the
+bottom half first, then the top, with the first pass's output becoming the
+second pass's person. The intermediate travels as fal's own URL rather than
+being downloaded and re-uploaded — it is already on their CDN.
+
+Bottoms first is not arbitrary. The last pass is drawn freshest, and at the
+waist the top overlaps the bottom; running tops last lets a shirt fall over a
+waistband instead of having trousers drawn on top of a placed shirt.
+
+**This reverses an earlier decision.** Under CatVTON chaining was rejected
+outright — its output was rough enough that feeding it back in compounded every
+artifact. FASHN's is clean enough to survive the round trip, which is what makes
+it viable now and did not before.
+
+**Measured, on the same photograph:**
+
+| outfit | time | result |
+| --- | --- | --- |
+| plain polo + tailored trousers | 45s | both garments clean, nothing bled |
+| dip-dye shirt + jeans | 57s | the shirt's print ran down the legs |
+| the same, `segmentation_free` off | 46s | worse — the trousers became a skirt |
+
+The variable is the garment, not the chaining. A loud all-over print gives pass
+two something to smear, and because pass two's canvas *is* pass one's output,
+nothing downstream can correct it — errors accumulate rather than average out.
+Ordinary clothes chain fine.
+
+`segmentation_free` was tried at `false` on exactly that reasoning: an explicit
+mask should confine each pass to its own half. It did not, and cost shape
+accuracy as well, so it is left at fal's default. Recorded so nobody spends the
+same two generations rediscovering it.
+
+**Two passes are two generations**, billed and waited for. The confirm step says
+so before the user spends it.
+
+**What it cannot do**, all enforced before a request is sent:
+
+- **One garment per body region.** A shirt and a coat both want the upper body,
+  and FASHN has one upper-body category — the second pass would paint over the
+  first and the generation spent on it would vanish. A one-piece cannot be
+  combined at all, since it already covers what a pair of trousers wants.
+- **Clothes only, in three categories.** Shoes, bags and jewellery are not
+  categories it has, so there is no setting that would make it try.
+  `FASHN_CATEGORIES` is a whitelist:
+
+  | wardrobe category | FASHN `category` |
   | --- | --- |
-  | `tops` | `upper` |
-  | `bottoms` | `lower` |
-  | `dresses` | `overall` — one pass over the whole torso |
-  | `outerwear` | `outer` — layers over what is there, rather than replacing it |
+  | `tops` | `tops` |
+  | `bottoms` | `bottoms` |
+  | `dresses` | `one-pieces` — one pass over the whole body |
+  | `outerwear` | `tops` — **see the regression below** |
   | `shoes`, `accessories` | *refused* |
 
   `dresses` covers anything worn as a single piece from shoulder to hem — a
-  shalwar kameez, a kurta, a sari, a lehenga, a western dress. `overall` is not
-  a nicety: mapping one of these to `upper` fits the top half of the garment and
-  leaves the wearer's own trousers showing underneath. DressCode, one of
-  CatVTON's two training sets, has a dresses split, so this is a case the model
-  was trained for rather than one it is being talked into.
+  shalwar kameez, a kurta, a sari, a lehenga, a western dress. `one-pieces` is
+  not a nicety: mapping one of these to `tops` fits the upper half of the
+  garment and leaves the wearer's own trousers showing underneath.
+
+- **⚠️ No outerwear category, and this is a regression.** CatVTON had an `outer`
+  cloth type that layered a coat *over* what the person already wore. FASHN has
+  three categories and none of them is outerwear, so a coat maps to `tops` and
+  **replaces** the top instead of going over it. It is the only thing this swap
+  made worse, and it is worth knowing before demoing a blazer over a shirt and
+  wondering where the shirt went.
 
   An unknown category is refused too rather than defaulted to `upper`, which
   would put trousers on someone's chest — and finding that out costs a
@@ -517,7 +588,7 @@ no log line means the app never reached you.
 ```
 main.py                  FastAPI app, CORS, the five endpoints
 vision.py                garment photo analysis — Gemini, then our own colour snapping
-tryon.py                 virtual try-on — CatVTON, hosted on fal
+tryon.py                 virtual try-on — FASHN v1.6, hosted on fal
 errors.py                the three failure types, and reading a status off any provider
 models.py                request/response shapes; camelCase aliases for the RN client
 rules.py                 outfit assembly — shortlist, score, choose
@@ -537,7 +608,7 @@ tests/test_match.py      the /match endpoint, over the real request shapes
 tests/test_recommend.py  the /recommend contract — shapes and ordering
 tests/test_rules.py      the scorer's judgement — season, occasion, and what it leaves off
 tests/test_vision.py     the checking around Gemini — no test here calls it
-tests/test_tryon.py      the guards around CatVTON, and the request sent to it —
+tests/test_tryon.py      the guards around the try-on model, and the request sent —
                          no test here calls fal; the happy path is stubbed
                          because a suite that spent money per run would be a trap
 requirements.txt         pinned to major versions
@@ -556,7 +627,7 @@ so swapping the model later is a change to `vision.py` alone. When OpenCV and
 YOLO land they replace `analyse_garment`; nothing else moves.
 
 **Virtual try-on is done.** It was the other stand-in here and is not one any
-more: `/try-on` runs CatVTON, a model built for the job, rather than asking a
+more: `/try-on` runs FASHN v1.6, a model built for the job, rather than asking a
 general image model to compose a photograph. See "How the try-on works" above.
 
 That swap is also the evidence for the claim this section keeps making. The
