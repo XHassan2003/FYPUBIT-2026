@@ -37,8 +37,15 @@ const TABS: { name: string; label: string; icon: IconName }[] = [
 /** Width reserved for the raised button, so the four tabs sit either side. */
 const CENTRE_WIDTH = 92;
 
-/** Indicator inset from each edge of its tab, matching the web's inset-x-4. */
-const INDICATOR_INSET = 16;
+/** Highlight pill inset from each edge of its tab — snug around icon + label. */
+const INDICATOR_INSET = 3;
+
+/** Vertical inset of the highlight pill from the floating bar's own edges. */
+const INDICATOR_V_INSET = 4;
+
+/** How rounded the floating bar and its highlight pill are. */
+const BAR_RADIUS = 34;
+const INDICATOR_RADIUS = 24;
 
 function AtelierTabBar({ state, navigation }: TabBarProps) {
   const insets = useSafeAreaInsets();
@@ -52,7 +59,7 @@ function AtelierTabBar({ state, navigation }: TabBarProps) {
   const onTryOn = activeName === "index";
 
   const indicatorStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(activeLayout ? 1 : 0, { duration: 180 }),
+    opacity: withTiming(activeLayout && !onTryOn ? 1 : 0, { duration: 180 }),
     width: Math.max((activeLayout?.width ?? 0) - INDICATOR_INSET * 2, 0),
     transform: [
       {
@@ -100,37 +107,44 @@ function AtelierTabBar({ state, navigation }: TabBarProps) {
         style={styles.tab}
       >
         <Ionicons name={config.icon} size={17} color={focused ? colors.ink : colors.ash} />
-        <Text style={[type.tab, { color: focused ? colors.ink : colors.ash }]}>{config.label}</Text>
+        <Text
+          numberOfLines={1}
+          style={[type.tab, styles.tabLabel, { color: focused ? colors.ink : colors.ash }]}
+        >
+          {config.label}
+        </Text>
       </Pressable>
     );
   };
 
   return (
-    <View style={[styles.bar, { paddingBottom: insets.bottom || 12 }]}>
-      <Animated.View style={[styles.indicator, indicatorStyle]} pointerEvents="none" />
+    <View style={[styles.wrapper, { paddingBottom: insets.bottom || 12 }]}>
+      <View style={styles.bar}>
+        <Animated.View style={[styles.indicator, indicatorStyle]} pointerEvents="none" />
 
-      {tab("wardrobe")}
-      {tab("style")}
+        {tab("wardrobe")}
+        {tab("style")}
 
-      <View style={styles.centreSlot}>
-        <Pressable
-          onPress={() => go("index")}
-          accessibilityRole="button"
-          accessibilityState={onTryOn ? { selected: true } : {}}
-          accessibilityLabel="Virtual try-on"
-          style={styles.centre}
-        >
-          <Animated.View style={[styles.centreDisc, centreStyle]}>
-            <Ionicons name="sparkles" size={21} color={colors.paper} />
-          </Animated.View>
-          <Text style={[type.tab, styles.centreLabel, { color: onTryOn ? colors.ink : colors.ash }]}>
-            Try-on
-          </Text>
-        </Pressable>
+        <View style={styles.centreSlot}>
+          <Pressable
+            onPress={() => go("index")}
+            accessibilityRole="button"
+            accessibilityState={onTryOn ? { selected: true } : {}}
+            accessibilityLabel="Virtual try-on"
+            style={styles.centre}
+          >
+            <Animated.View style={[styles.centreDisc, centreStyle]}>
+              <Ionicons name="sparkles" size={21} color={colors.paper} />
+            </Animated.View>
+            <Text style={[type.tab, styles.centreLabel, { color: onTryOn ? colors.ink : colors.ash }]}>
+              Try-on
+            </Text>
+          </Pressable>
+        </View>
+
+        {tab("builder")}
+        {tab("profile")}
       </View>
-
-      {tab("builder")}
-      {tab("profile")}
     </View>
   );
 }
@@ -148,21 +162,45 @@ export default function TabsLayout() {
 }
 
 const styles = StyleSheet.create({
+  // Transparent gutter around the floating pill — lets the screen's own
+  // background show through on all sides instead of the bar docking flush
+  // with the edges the way a conventional tab bar does.
+  wrapper: {
+    backgroundColor: "transparent",
+    paddingHorizontal: 16,
+    paddingTop: 10,
+  },
   bar: {
     flexDirection: "row",
     alignItems: "stretch",
-    backgroundColor: paperAlpha.a92,
-    borderTopWidth: 1,
-    borderTopColor: inkAlpha.a10,
+    backgroundColor: paperAlpha.a95,
+    borderRadius: BAR_RADIUS,
+    borderWidth: 1,
+    borderColor: inkAlpha.a10,
     paddingTop: 14,
+    paddingBottom: 12,
+    ...shadow.lift,
   },
-  indicator: { position: "absolute", top: 0, left: 0, height: 1, backgroundColor: colors.ink },
-  tab: { flex: 1, alignItems: "center", gap: 6 },
+  // A rounded chip that slides beneath the focused tab's icon + label,
+  // replacing the old full-width hairline indicator.
+  indicator: {
+    position: "absolute",
+    top: INDICATOR_V_INSET,
+    bottom: INDICATOR_V_INSET,
+    left: 0,
+    borderRadius: INDICATOR_RADIUS,
+    backgroundColor: colors.sand,
+  },
+  tab: { flex: 1, alignItems: "center", justifyContent: "center", gap: 6 },
+  // The house `type.tab` letter-spacing (1.6) is tuned for wider labels than
+  // this bar has room for — "Wardrobe" at that spacing overruns its own
+  // column. Tightened locally rather than in the shared token.
+  tabLabel: { letterSpacing: 0.4 },
 
   centreSlot: { width: CENTRE_WIDTH },
   // Lifted out of the bar. `overflow: visible` is the default on iOS but the
   // bar has no clipping either, so the disc is free to sit above its edge.
-  centre: { position: "absolute", left: 0, right: 0, top: -38, alignItems: "center" },
+  centre: { position: "absolute", left: 0, right: 0, top: -34, alignItems: "center" },
   centreDisc: {
     width: 58,
     height: 58,

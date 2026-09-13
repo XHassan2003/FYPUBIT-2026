@@ -1,12 +1,18 @@
-﻿# AI Personal Stylist — frontend
+# AI Personal Stylist
 
-Seven working screens (Home, Style, Wardrobe, Looks, Profile, Add Piece, Colour
-Quiz) plus the virtual try-on flow, all reading from one shared store, behind
-Clerk sign-in with email or Google. There is still no backend and no database — the wardrobe lives on the
-device. That is deliberate; this is the demo layer, and the AI service plugs in
-later at two functions.
+Two halves. A React Native app — seven working screens (Home, Style, Wardrobe,
+Looks, Profile, Add Piece, Colour Quiz) plus the virtual try-on flow, all reading
+from one shared store, behind Clerk sign-in with email or Google. And a Python
+service behind it at five endpoints, three of them model-backed: it reads a
+garment out of a photograph, scores whole outfits on measured colour
+relationships, and puts the wearer in clothes they have not put on.
 
-Built with Expo SDK 57, expo-router, TypeScript, zustand and Clerk.
+**There is still no database.** The wardrobe is persisted on the device, not
+against an account, so two accounts on one handset see the same wardrobe. That
+is the largest remaining gap — see [Status](#status).
+
+Built with Expo SDK 57, expo-router, TypeScript, zustand and Clerk; the service
+is Python and FastAPI. See [service/README.md](service/README.md).
 
 ---
 
@@ -179,7 +185,7 @@ app/color-quiz.tsx       Colour Quiz modal — four questions, seasonal palette 
 constants/theme.ts       colours, type scale, spacing — the ONLY place for hexes
 constants/api.ts         the recommendation service's address and timeout
 constants/auth.ts        the Clerk key, and Clerk errors turned into readable text
-data/mockWardrobe.ts     20 seed items + the placeholder colour-pairing rules
+data/mockWardrobe.ts     22 seed items (no tops — see RETIRED_SEED_IDS) + colour-pairing rules
 data/colorSeasons.ts     four seasonal palettes, the quiz questions, computeSeason()
 store/useWardrobe.ts     zustand + persist — items, outfits, profile, suggestOutfit(), matchItemToProfile()
 store/useTryOn.ts        the try-on in progress — shared by Home and the flow, not persisted
@@ -192,7 +198,7 @@ hooks/useGarmentAnalysis.ts  pick, resize and read a garment photo
 components/AuthLayout.tsx       the auth shell, field, submit, divider and notice slab
 components/GoogleButton.tsx     the Google mark, and the SSO call behind it
 components/PhotoAnalysis.tsx    what the analyser read off the photo, and that it is editable
-components/TryOnSteps.tsx       the try-on's four visible steps, kept together like AuthLayout
+components/TryOnSteps.tsx       the try-on's five steps, kept together like AuthLayout
 components/Screen.tsx           screen shell: safe area, scroll, sticky headers, entry fade
 components/Sheet.tsx            bottom sheet with drag-to-dismiss
 components/ItemSheet.tsx        garment detail + colour match checker, built on Sheet
@@ -205,11 +211,11 @@ components/SectionHeader.tsx    eyebrow + hairline rule + optional action
 components/EmptyState.tsx       image, headline, message, action
 components/Toggle.tsx           square switch for preferences
 
-assets/images/editorial/  six photographs used by Home, Style, Wardrobe, Looks,
-                          Profile and the quiz result
+assets/images/editorial/  seven photographs used by Home, Style, Wardrobe, Looks,
+                          Profile, the quiz result and the try-on sample
 
-service/                 the Python service — /recommend, /match, and the colour maths
-                         behind them; see service/README.md
+service/                 the Python service — five endpoints: /recommend, /match,
+                         /analyse, /try-on, /health; see service/README.md
 ```
 
 ## Splitting the work across four people
@@ -402,10 +408,13 @@ Done:
 - All seven screens plus the try-on flow, wired to the shared store
 - Virtual try-on moved to the centre of the app: Home is the landing, and the
   tab bar's raised button opens it from anywhere
-- Virtual try-on moved off Gemini onto a purpose-built try-on model, now **FASHN v1.6**
-  model — inpainting rather than composition, so the wearer's face, hair, pose
-  and background survive. Run end to end against fal on a real photograph:
-  ~11s per generation, identity and background held, garment applied cleanly
+- Virtual try-on moved off Gemini onto a purpose-built try-on model, now
+  **FASHN v1.6** — only the garment region is regenerated, so the wearer's face,
+  hair, pose and background survive. Run end to end against fal on real
+  photographs: **19–22s** for a single garment, **45–57s** for a two-piece
+  outfit, identity and background held, garment applied cleanly. (The ~11s
+  figure this line used to quote was the superseded CatVTON, and understated
+  what a demonstration actually waits for.)
 - The colour analysis feature — quiz, seasonal palettes, per-item match checker
 - Full design system and fifteen shared components
 - Email and Google sign-in, both verified on a device
@@ -426,8 +435,26 @@ Done:
 - Verified on a physical device in Expo Go: added pieces, deletions and the quiz
   result all survive a force-quit
 
-Next: the AI service. See "Where the real AI plugs in" above — that is the whole
-remaining project.
+Left:
+
+- **A backend and a database.** The single largest gap, and the only remaining
+  one that is architectural. Accounts exist but store nothing, so signing in
+  fetches no wardrobe and two accounts on one handset share one. This is the
+  difference between a demonstration and an application.
+- **Somewhere to host the service.** It runs on a laptop on the same Wi-Fi as
+  the phone, so a sleeping laptop or a guest network takes every AI feature down
+  to its fallback. `EXPO_PUBLIC_API_URL` already exists to point the app at a
+  hosted instance, so this is hosting work rather than code.
+- **A real wardrobe.** A fresh install has no tops at all, and the seed is stock
+  photography — see "Putting your own clothes in". An afternoon's work that
+  improves every other feature at once.
+- **The offline fallback.** `buildLocalOutfit()` is still the original
+  random-within-category rule, and is now the last placeholder in the codebase.
+  It says so on screen, which is why it has survived this long.
+
+Optional, if time allows: a development build (removes the Expo Go ceiling),
+OpenCV and YOLO in place of Gemini for garment analysis, and fitting the
+recommender's weights to recorded preferences rather than reasoning about them.
 
 ## Persistence
 
@@ -532,7 +559,7 @@ newer on npm is a 58 canary. It goes away when Expo fixes it.
 - **The seeded wardrobe is stock photography, not anyone's real clothes.** The
   strongest version of this demo is your own wardrobe, and
   `service/tools/import_wardrobe.py` exists to make that a five-minute job —
-  see "Putting your own clothes in" below. Retailer product photos (Khaadi,
+  see "Putting your own clothes in" above. Retailer product photos (Khaadi,
   Sapphire, J., Outfitters) are those companies' copyrighted work and are not
   an option for a submitted project.
 - **The South Asian formalwear uses editorial photographs, not product shots.**
