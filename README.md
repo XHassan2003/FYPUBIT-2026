@@ -430,6 +430,15 @@ rather than overwrite it with nothing. Once a server record exists, later
 sign-ins prefer it outright: no field-by-field merge, the same last-write-wins
 rule every debounced push already implies.
 
+⚠️ **That "server wins outright" rule has one narrow, known edge.** A push
+is debounced roughly 2.5 seconds after a change. Add an item, then force-quit
+the app inside that window, and the push never fires — nothing is running to
+fire it. The next launch's sync sees a server record that predates the item
+and adopts it, so the item that was never pushed is silently gone. Same
+category of tradeoff as the offline-device case above, just a shorter window;
+left this way deliberately rather than adding a field-by-field merge for one
+narrow case, but worth knowing before it looks like data loss during a demo.
+
 **Garment photos sync too.** A photo added on-device starts as a local
 `file://` path, same as always. `wardrobeSync.ts` uploads any such image to
 Supabase Storage before a push and rewrites the item to point at the result —
