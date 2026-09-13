@@ -16,6 +16,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { requirePublishableKey } from "@/constants/auth";
 import { colors } from "@/constants/theme";
 import { useWardrobe } from "@/store/useWardrobe";
+import { useWardrobeSync } from "@/store/wardrobeSync";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -31,6 +32,11 @@ export const unstable_settings = {
  */
 function RootNavigator() {
   const { isLoaded, isSignedIn } = useAuth();
+
+  // Pulls the account's wardrobe on sign-in and pushes local changes back —
+  // see store/wardrobeSync.ts. Called once, here, rather than per-screen:
+  // the sync needs to keep running regardless of which tab is on screen.
+  useWardrobeSync();
 
   useEffect(() => {
     if (isLoaded) {

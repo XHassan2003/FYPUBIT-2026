@@ -148,3 +148,76 @@ class MatchResponse(BaseModel):
     # and the colour it was measured against are what make the score defensible.
     delta_e: float = Field(alias="deltaE")
     nearest_color: str = Field(alias="nearestColor")
+
+
+# ---------------------------------------------------------------------------
+# GET/PUT /wardrobe, POST /wardrobe/images — see db.py, auth.py, db_models.py.
+#
+# Outfit and Profile do not exist above because nothing before this needed
+# them: /recommend, /match and /analyse all take individual WardrobeItems,
+# never a whole wardrobe. These mirror store/useWardrobe.ts's `Outfit` and
+# `Profile` interfaces field-for-field, aliased the same way WardrobeItem is,
+# because the database stores exactly what the app sends rather than a
+# second, server-owned definition of either shape.
+# ---------------------------------------------------------------------------
+
+
+class Outfit(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    item_ids: list[str] = Field(alias="itemIds")
+    occasion: str
+    created_at: int = Field(alias="createdAt")
+    # Only present when the look was saved from the try-on flow.
+    preview_image: Optional[str] = Field(default=None, alias="previewImage")
+
+
+class Measurements(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    height: str
+    chest: str
+    waist: str
+    hips: str
+    shoe_size: str = Field(alias="shoeSize")
+
+
+class Preferences(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    notifications: bool
+    use_metric: bool = Field(alias="useMetric")
+    include_accessories: bool = Field(alias="includeAccessories")
+
+
+class Profile(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    avatar_color: str = Field(alias="avatarColor")
+    avatar_uri: Optional[str] = Field(default=None, alias="avatarUri")
+    color_season: Optional[str] = Field(default=None, alias="colorSeason")
+    style_tags: list[str] = Field(alias="styleTags")
+    measurements: Measurements
+    preferences: Preferences
+
+
+class WardrobeSync(BaseModel):
+    """The whole synced wardrobe, in one piece.
+
+    Deliberately whole-blob rather than split into per-item requests: it is
+    exactly what zustand's `persist` already treats as one unit
+    (`items`/`outfits`/`profile` together), so no translation layer sits
+    between what the app persists locally and what it syncs.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WardrobeItem]
+    outfits: list[Outfit]
+    profile: Profile
+
+
+class ImageUploadResponse(BaseModel):
+    url: str

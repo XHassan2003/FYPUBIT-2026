@@ -1,10 +1,16 @@
 ﻿# Recommendation service
 
-The Python half of the project. Five endpoints, all doing real work now:
-`/match` scores one garment against the user's seasonal palette and
+The Python half of the project. Eight endpoints. Five are stateless, all doing
+real work: `/match` scores one garment against the user's seasonal palette and
 `/recommend` assembles a whole outfit, both measuring colour in CIE Lab rather
 than looking it up in a table; `/analyse` reads a garment out of a photograph;
-and `/try-on` fits one onto the wearer with FASHN v1.6.
+`/try-on` fits one onto the wearer with FASHN v1.6; `/health` proves the phone
+can reach this machine. The other three are the only ones that touch a
+database: `GET`/`PUT /wardrobe` sync an authenticated account's wardrobe to
+Postgres, and `POST /wardrobe/images` uploads a garment photo to Supabase
+Storage so it follows the wardrobe to another device — see "Wardrobe sync"
+below and the main [README](../README.md#account-sync) for the app-side half
+of the design.
 
 ## Setup
 
@@ -26,27 +32,36 @@ pip install -r requirements-dev.txt
 
 ### The API keys
 
-Two, one per model-backed endpoint. `/recommend` and `/match` need neither —
-they are our own maths and work offline.
+Seven values now, each scoped to the endpoint(s) that need it. `/recommend`
+and `/match` need none of them — they are our own maths and work offline.
 
 ```bash
 cp .env.example .env
 ```
 
-| Key | Endpoint | Where from |
+| Key | Endpoint(s) | Where from |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | `POST /analyse` — reading a garment from a photo | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | `FAL_KEY` | `POST /try-on` — FASHN v1.6 | [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys) |
+| `DATABASE_URL` | `GET`/`PUT /wardrobe` | Supabase → Settings → Database → Connection string (pooled, `postgresql+psycopg://`) |
+| `CLERK_JWKS_URL` | `GET`/`PUT /wardrobe`, `POST /wardrobe/images` | Clerk dashboard → API Keys → Advanced |
+| `CLERK_ISSUER` | same three | Your Clerk Frontend API domain, no path |
+| `SUPABASE_URL` | `POST /wardrobe/images` | Supabase → Settings → API |
+| `SUPABASE_SERVICE_ROLE_KEY` | `POST /wardrobe/images` | Supabase → Settings → API — the **service role** key, not anon |
 
-Both are **secrets**, unlike the app's Clerk publishable key. That is why these
-calls live here rather than in the app: anything named `EXPO_PUBLIC_*` is
+All seven are **secrets**, unlike the app's Clerk publishable key. That is why
+these calls live here rather than in the app: anything named `EXPO_PUBLIC_*` is
 inlined into the bundle at build time and can be read out of a shipped app, and
-both of these are billable. `service/.env` is gitignored.
+every one of the first two is billable — the last five gate infrastructure a
+leaked value could read or write wholesale. `service/.env` is gitignored.
 
-Missing either one returns **503** from that endpoint rather than 500 — it is a
-setup problem, not a failure, so the app says "not set up yet" instead of asking
-the user to try again. The other endpoint keeps working; the keys are
-independent.
+Missing any one returns **503** from the endpoint(s) it gates, rather than 500
+— it is a setup problem, not a failure, so the app says "not set up yet"
+instead of asking the user to try again. Every other endpoint keeps working;
+none of these seven values are read at import time or at startup, only when a
+request actually needs one (see `db.py`, `auth.py`, `storage.py`), so a
+service missing all five of the wardrobe-sync values still serves
+`/recommend`, `/match`, `/analyse` and `/try-on` exactly as before.
 
 To check them without running a model or spending anything:
 
@@ -515,14 +530,77 @@ The CIEDE2000 implementation is verified against the 31 reference pairs from
 Sharma, Wu & Dalal (2005), matching to within 1×10⁻⁴. That check is
 `tests/test_color.py`, not a claim in a README — run it yourself.
 
+## Wardrobe sync
+
+The only three endpoints with a database behind them, and the only three that
+require a signed-in caller. See the main
+[README's Account sync section](../README.md#account-sync) for the app-side
+half — `store/wardrobeSync.ts` decides when each of these gets called and why.
+
+`GET /wardrobe` — returns the signed-in account's wardrobe, or **404** if it
+has never synced. The app reads that 404 as "push local up," not "empty" —
+returning an empty `{items: [], outfits: [], profile: {...}}` instead would
+make a first sync indistinguishable from an account whose wardrobe really was
+wiped, which is exactly the ambiguity this design avoids.
+
+`PUT /wardrobe` — replaces the account's wardrobe with the body, in full:
+
+```json
+{
+  "items": [ /* WardrobeItem[] */ ],
+  "outfits": [ /* Outfit[] */ ],
+  "profile": { /* Profile */ }
+}
+```
+
+Whole-blob, last-write-wins. There is no field-by-field merge anywhere in this
+service — the one place that ever decides "keep local" or "adopt the server's"
+is the app's own reconciliation step, once, right after sign-in. By the time a
+`PUT` reaches here, that decision has already been made.
+
+`POST /wardrobe/images` — multipart, one `file` field. Stores the photo in
+Supabase Storage under `{user_id}/{uuid4()}.{ext}` and returns
+`{"url": "..."}`. The app calls this once per garment photo that is still a
+local `file://` path, then rewrites that item's `image` field to the URL this
+returns, so the photo — not just the item's name and colour — follows the
+wardrobe to another device.
+
+**Auth for all three**: `Authorization: Bearer <Clerk session token>`,
+verified in `auth.py` against Clerk's public JWKS — signature, expiry and
+issuer, never the request body. No Clerk secret key is involved; a request
+with no bearer token, or one that fails verification, gets **401** before
+touching the database. `user_id` always comes from the verified token, never
+from anything the client sent — a request cannot read or write another
+account's row by naming a different id anywhere in the body.
+
+**Schema**: one table, `wardrobes`, one row per account —
+
+| column | type |
+| --- | --- |
+| `user_id` | primary key, the Clerk `sub` claim |
+| `items` | JSON |
+| `outfits` | JSON |
+| `profile` | JSON |
+| `updated_at` | set on every write, not read by anything |
+
+Deliberately a JSON blob rather than normalized tables: the client's shape is
+still evolving additively (`Outfit.previewImage` shipped with no version
+bump), and a JSON column absorbs that with zero migrations — matching how
+`store/useWardrobe.ts`'s own `persist` already treats `items`/`outfits`/
+`profile` as one unit written and read together. No Alembic;
+`SQLModel.metadata.create_all()` at startup is enough for one table this
+stable. See `db.py`, `db_models.py`.
+
 ## Tests
 
 ```bash
 pytest
 ```
 
-From this folder, with the dev dependencies installed. 156 tests in about three
+From this folder, with the dev dependencies installed. 189 tests in about five
 seconds — there is no reason not to run them before pushing.
+`tests/test_wardrobe.py` runs against an in-memory SQLite database, not
+Supabase, so the suite needs no `DATABASE_URL` and spends nothing.
 
 ### Testing the try-on without spending anything
 
@@ -586,14 +664,19 @@ no log line means the app never reached you.
 ## What is where
 
 ```
-main.py                  FastAPI app, CORS, the five endpoints
+main.py                  FastAPI app, CORS, lifespan, the eight endpoints
 vision.py                garment photo analysis — Gemini, then our own colour snapping
 tryon.py                 virtual try-on — FASHN v1.6, hosted on fal
 errors.py                the three failure types, and reading a status off any provider
 models.py                request/response shapes; camelCase aliases for the RN client
 rules.py                 outfit assembly — shortlist, score, choose
 color.py                 Lab conversion, CIEDE2000, palette scoring, garment harmony
-conftest.py              puts this folder on the import path for the suite
+db.py                    the SQLModel engine and session — see "Wardrobe sync"
+db_models.py             the one database table, `wardrobes`
+auth.py                  verifies a Clerk session token against Clerk's JWKS
+storage.py               uploads a garment photo to Supabase Storage
+conftest.py              puts this folder on the import path for the suite;
+                         the throwaway RSA keypair fixture auth tests share
 tools/try_one.py         one real try-on generation, from the command line.
                          The only thing here that spends money when you run it
                          — which is why it is a tool and not a test
@@ -611,6 +694,11 @@ tests/test_vision.py     the checking around Gemini — no test here calls it
 tests/test_tryon.py      the guards around the try-on model, and the request sent —
                          no test here calls fal; the happy path is stubbed
                          because a suite that spent money per run would be a trap
+tests/test_auth.py       Clerk token verification, against a throwaway keypair —
+                         no test here touches a real JWKS endpoint
+tests/test_wardrobe.py   the /wardrobe contract, over an in-memory SQLite
+                         database and a faked identity — no test here needs
+                         real Supabase credentials
 requirements.txt         pinned to major versions
 requirements-dev.txt     pytest and httpx2, needed only to run the suite
 ```

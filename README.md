@@ -3,16 +3,20 @@
 Two halves. A React Native app — seven working screens (Home, Style, Wardrobe,
 Looks, Profile, Add Piece, Colour Quiz) plus the virtual try-on flow, all reading
 from one shared store, behind Clerk sign-in with email or Google. And a Python
-service behind it at five endpoints, three of them model-backed: it reads a
+service behind it at eight endpoints, three of them model-backed: it reads a
 garment out of a photograph, scores whole outfits on measured colour
 relationships, and puts the wearer in clothes they have not put on.
 
-**There is still no database.** The wardrobe is persisted on the device, not
-against an account, so two accounts on one handset see the same wardrobe. That
-is the largest remaining gap — see [Status](#status).
+**The wardrobe now belongs to the account, not just the device.** A Postgres
+database (hosted on Supabase) and three new endpoints sync `items`, `outfits`
+and `profile` to whoever is signed in, offline-first — the on-device copy
+stays the fallback exactly as before, and a laptop that is asleep degrades the
+app to local storage rather than breaking it. It needs your own Supabase
+project's credentials in `service/.env` to actually run; see
+[Account sync](#account-sync) and [Status](#status) for what that leaves.
 
 Built with Expo SDK 57, expo-router, TypeScript, zustand and Clerk; the service
-is Python and FastAPI. See [service/README.md](service/README.md).
+is Python, FastAPI and SQLModel. See [service/README.md](service/README.md).
 
 ---
 
@@ -189,7 +193,9 @@ data/mockWardrobe.ts     22 seed items (no tops — see RETIRED_SEED_IDS) + colo
 data/colorSeasons.ts     four seasonal palettes, the quiz questions, computeSeason()
 store/useWardrobe.ts     zustand + persist — items, outfits, profile, suggestOutfit(), matchItemToProfile()
 store/useTryOn.ts        the try-on in progress — shared by Home and the flow, not persisted
+store/wardrobeSync.ts    pulls the account's wardrobe on sign-in, pushes local changes — see Account sync
 store/__tests__/useTryOn.test.ts  the photo check on step three, both sides of every threshold
+store/__tests__/wardrobeSync.test.ts  pull/push degrading to a fallback rather than throwing
 data/__tests__/mockWardrobe.test.ts  the seed, and that RETIRED_SEED_IDS cannot delete a live piece
 jest.setup.js            stands in for the native modules Jest has no device for
 hooks/useDisplayName.ts  Clerk's name for the Style greeting and the Profile heading
@@ -214,8 +220,9 @@ components/Toggle.tsx           square switch for preferences
 assets/images/editorial/  seven photographs used by Home, Style, Wardrobe, Looks,
                           Profile, the quiz result and the try-on sample
 
-service/                 the Python service — five endpoints: /recommend, /match,
-                         /analyse, /try-on, /health; see service/README.md
+service/                 the Python service — eight endpoints: /recommend, /match,
+                         /analyse, /try-on, /wardrobe (GET/PUT), /wardrobe/images,
+                         /health; see service/README.md
 ```
 
 ## Splitting the work across four people
@@ -401,6 +408,49 @@ one garment at a time, it cannot do a head-to-toe look, and the fit it shows is
 plausible drape rather than a measurement. It is not a fitting room, and saying
 so first is much better than being caught out.
 
+## Account sync
+
+The wardrobe used to live only in AsyncStorage — persisted on the device, not
+against anyone's account, so two accounts on one phone shared a wardrobe and
+nothing followed a user to a second device. `store/wardrobeSync.ts` fixes that
+without touching how AsyncStorage persistence already works: `useWardrobeSync()`
+(called once, from `app/_layout.tsx`) pulls the signed-in account's wardrobe
+from the service on sign-in and pushes local changes back afterward, debounced.
+
+**Offline-first, deliberately.** AsyncStorage stays exactly what it was — the
+source of truth for a device that cannot reach the service — and every call in
+`wardrobeSync.ts` degrades to "do nothing, try again later" on failure, the
+same contract `fetchOutfit`/`fetchMatch` already keep. A laptop that is asleep
+costs a stale server copy, never a broken screen.
+
+**The first sync per account never discards what was already there.** A `GET
+/wardrobe` that comes back `404` means "this account has never synced," not
+"empty" — the app reads that as permission to push the local wardrobe up
+rather than overwrite it with nothing. Once a server record exists, later
+sign-ins prefer it outright: no field-by-field merge, the same last-write-wins
+rule every debounced push already implies.
+
+**Garment photos sync too.** A photo added on-device starts as a local
+`file://` path, same as always. `wardrobeSync.ts` uploads any such image to
+Supabase Storage before a push and rewrites the item to point at the result —
+seed-wardrobe URLs and the bulk-import tool's paths are left untouched, since
+only `file://` values are ones the backfill recognises as its job.
+
+Server-side: one table, `wardrobes`, one JSON blob per account
+(`items`/`outfits`/`profile` together, mirroring exactly what `persist`
+already treats as one unit) — see `service/db_models.py`. Requests are
+authenticated by verifying the Clerk session token's signature against
+Clerk's public JWKS (`service/auth.py`); nothing in the service ever sees or
+needs Clerk's secret key.
+
+**This needs your own Supabase project to actually run.** `DATABASE_URL`,
+`CLERK_JWKS_URL`, `CLERK_ISSUER`, `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` all go in `service/.env` — see the comments in
+`service/.env.example` for exactly where each one comes from in the Supabase
+and Clerk dashboards. Missing any of them returns 503 from `/wardrobe` and
+`/wardrobe/images` alone; `/recommend`, `/match`, `/analyse` and `/try-on`
+have nothing to do with the database and keep working either way.
+
 ## Status
 
 Done:
@@ -434,17 +484,36 @@ Done:
 - Typecheck, lint and a production bundle all pass
 - Verified on a physical device in Expo Go: added pieces, deletions and the quiz
   result all survive a force-quit
+- **A backend and a database** — Postgres on Supabase, one row per account, and
+  three new endpoints (`GET`/`PUT /wardrobe`, `POST /wardrobe/images`) behind
+  Clerk-token verification. `store/wardrobeSync.ts` pulls on sign-in and pushes
+  on every change, offline-first, with AsyncStorage still the fallback. Wired
+  and covered by both test suites (189 passing in `service/`, 26 in the app),
+  and **verified end to end on a physical device in Expo Go**: signed in,
+  added a garment with its own photo, and watched both the item and the
+  uploaded photo show up in Supabase's table editor and Storage browser —
+  the account's real wardrobe, not a fixture. See
+  [Account sync](#account-sync).
+
+  Two real bugs surfaced only by that device test, neither of which any
+  amount of `pytest`/Jest could have caught, because both are specific to a
+  physical device talking to a live Clerk/Supabase pair rather than a mock:
+  a few seconds of clock drift between this laptop and Clerk's server made
+  every session token look "not yet valid" (`auth.py` now allows 30s of
+  leeway, standard practice for exactly this); and this RN version's
+  `FormData` rejects the classic `{uri, name, type}` file descriptor outright
+  with `"Unsupported FormDataPart implementation"` — `wardrobeSync.ts` uses
+  `expo-file-system`'s own `File.upload()` instead, which sidesteps `FormData`
+  entirely and is what `store/useTryOn.ts` already relies on for the same
+  reason.
 
 Left:
 
-- **A backend and a database.** The single largest gap, and the only remaining
-  one that is architectural. Accounts exist but store nothing, so signing in
-  fetches no wardrobe and two accounts on one handset share one. This is the
-  difference between a demonstration and an application.
-- **Somewhere to host the service.** It runs on a laptop on the same Wi-Fi as
-  the phone, so a sleeping laptop or a guest network takes every AI feature down
-  to its fallback. `EXPO_PUBLIC_API_URL` already exists to point the app at a
-  hosted instance, so this is hosting work rather than code.
+- **Somewhere to host the service.** It still runs on a laptop on the same
+  Wi-Fi as the phone, so a sleeping laptop or a guest network takes every AI
+  feature — sync included, now — down to its fallback. `EXPO_PUBLIC_API_URL`
+  already exists to point the app at a hosted instance, so this is hosting
+  work rather than code.
 - **A real wardrobe.** A fresh install has no tops at all, and the seed is stock
   photography — see "Putting your own clothes in". An afternoon's work that
   improves every other feature at once.
@@ -598,6 +667,14 @@ newer on npm is a 58 canary. It goes away when Expo fixes it.
 - The seasonal palettes themselves are still authored by hand. The scoring
   against them is measured, but which six colours make up "True Winter" is a
   designer's list, not an analysis.
+- **The synced photo bucket is public.** `service/storage.py` uploads garment
+  photos to a public Supabase Storage bucket with an unguessable uuid4
+  filename — nothing enforces that only the owner can view one, only that a
+  stranger cannot guess its URL. The same trade this project already makes
+  elsewhere (wide-open dev CORS, the `.env`-file secrets) for the sake of
+  staying a two-terminal student project rather than one with its own secrets
+  manager and row-level security policies. Fine for a submitted project, not
+  for real people's photos in production.
 - **Web does not run.** iOS and Android are fine; `npx expo export` produces a
   web bundle too, and it builds, but it throws
   `Cannot use 'import.meta' outside a module` before rendering anything. The

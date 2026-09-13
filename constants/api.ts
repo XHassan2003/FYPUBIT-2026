@@ -53,6 +53,18 @@ export const API_TIMEOUT_MS = 4000;
 // read a photograph — so the honest choice is to wait, then say it failed.
 export const ANALYSIS_TIMEOUT_MS = 25000;
 
+// Syncing the wardrobe to the account (GET/PUT /wardrobe, see
+// store/wardrobeSync.ts) is still plain JSON, no image bytes — those go
+// through the upload endpoint below — but the payload is the whole wardrobe
+// rather than one recommendation, so it gets a little more room than
+// API_TIMEOUT_MS before giving up and staying on local storage.
+export const WARDROBE_SYNC_TIMEOUT_MS = 8000;
+
+// Uploading one garment photo (POST /wardrobe/images). Closer to
+// ANALYSIS_TIMEOUT_MS than API_TIMEOUT_MS for the same reason: real bytes
+// over the wire, not a JSON round trip.
+export const IMAGE_UPLOAD_TIMEOUT_MS = 20000;
+
 // Virtual try-on gets longer still. It runs a diffusion model rather than
 // reading an image, and the request is queued before it is run, so tens of
 // seconds is the normal case. The screen says what it is doing throughout, so a

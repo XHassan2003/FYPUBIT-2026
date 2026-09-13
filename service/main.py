@@ -9,23 +9,32 @@ Run it:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 """
 
 import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import Session
 
+import storage
+from auth import get_current_user_id
 from color import score_item_against_season
+from db import get_session, init_db
+from db_models import Wardrobe
 from errors import VisionFailed, VisionRateLimited, VisionUnavailable
 from models import (
     AnalyseRequest,
     AnalyseResponse,
+    ImageUploadResponse,
     MatchRequest,
     MatchResponse,
     RecommendRequest,
     TryOnRequest,
     TryOnResponse,
     WardrobeItem,
+    WardrobeSync,
 )
 from rules import build_outfit
 from tryon import generate_try_on
@@ -58,10 +67,17 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="AI Personal Stylist",
     description="Outfit recommendation service for the stylist app.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # Wide open because this only ever runs on a laptop during development. Lock the
@@ -189,3 +205,71 @@ def try_on(request: TryOnRequest) -> TryOnResponse:
         raise HTTPException(status_code=502, detail=str(err)) from err
 
     return TryOnResponse(image=result["image"], mimeType=result["mimeType"])
+
+
+# ---------------------------------------------------------------------------
+# The account's wardrobe. Everything above this line is stateless — these
+# three are the only endpoints that touch a database, and the only ones that
+# require a signed-in caller (see auth.py). See store/wardrobeSync.ts for how
+# the app decides when to call which, and why offline-first means a failure
+# here never surfaces as an error the user sees.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/wardrobe", response_model=WardrobeSync)
+def get_wardrobe(
+    user_id: str = Depends(get_current_user_id),
+    session: Session = Depends(get_session),
+) -> WardrobeSync:
+    """Return the signed-in account's synced wardrobe.
+
+    404 means "never synced," not "empty" — the app reads that as permission
+    to push its local wardrobe up rather than overwrite it with nothing.
+    """
+    record = session.get(Wardrobe, user_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="No synced wardrobe for this account yet")
+    return WardrobeSync(items=record.items, outfits=record.outfits, profile=record.profile)
+
+
+@app.put("/wardrobe", status_code=204)
+def put_wardrobe(
+    payload: WardrobeSync,
+    user_id: str = Depends(get_current_user_id),
+    session: Session = Depends(get_session),
+) -> None:
+    """Replace the signed-in account's wardrobe, in full.
+
+    Whole-blob, last-write-wins — there is no field-by-field merge here or
+    anywhere else in this service. The reasoning lives in
+    store/wardrobeSync.ts, where the one place that ever decides "local wins"
+    or "server wins" actually is.
+    """
+    dumped = payload.model_dump(by_alias=True)
+    record = session.get(Wardrobe, user_id)
+    if record is None:
+        record = Wardrobe(user_id=user_id, items=dumped["items"], outfits=dumped["outfits"], profile=dumped["profile"])
+    else:
+        record.items = dumped["items"]
+        record.outfits = dumped["outfits"]
+        record.profile = dumped["profile"]
+        record.updated_at = datetime.now(timezone.utc)
+    session.add(record)
+    session.commit()
+
+
+@app.post("/wardrobe/images", response_model=ImageUploadResponse)
+async def upload_wardrobe_image(
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user_id),
+) -> ImageUploadResponse:
+    """Store one garment photo so it can follow the wardrobe to another device.
+
+    Every other field on a WardrobeItem is small JSON; the photo is the one
+    that starts out local-only — a `file://` path from the picker on the
+    device that added it. store/wardrobeSync.ts calls this once per such
+    photo and rewrites the item to point here instead.
+    """
+    data = await file.read()
+    url = storage.upload_photo(user_id, data, file.content_type or "image/jpeg")
+    return ImageUploadResponse(url=url)
