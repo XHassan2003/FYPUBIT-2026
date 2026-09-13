@@ -496,9 +496,14 @@ Done:
 - **A backend and a database** — Postgres on Supabase, one row per account, and
   three new endpoints (`GET`/`PUT /wardrobe`, `POST /wardrobe/images`) behind
   Clerk-token verification. `store/wardrobeSync.ts` pulls on sign-in and pushes
-  on every change, offline-first, with AsyncStorage still the fallback. Wired
-  and covered by both test suites (189 passing in `service/`, 26 in the app),
-  and **verified end to end on a physical device in Expo Go**: signed in,
+  on every change, offline-first, with AsyncStorage still the fallback. **The
+  data layer is genuinely hosted** — the Postgres database and the Storage
+  bucket both live on Supabase's infrastructure, not this laptop, so the
+  account's wardrobe and photos persist independent of whether this machine
+  is even on. (The API layer that reads and writes them is a separate
+  question — see "Left".) Wired and covered by both test suites (189 passing
+  in `service/`, 26 in the app), and **verified end to end on a physical
+  device in Expo Go**: signed in,
   added a garment with its own photo, and watched both the item and the
   uploaded photo show up in Supabase's table editor and Storage browser —
   the account's real wardrobe, not a fixture. See
@@ -518,11 +523,13 @@ Done:
 
 Left:
 
-- **Somewhere to host the service.** It still runs on a laptop on the same
-  Wi-Fi as the phone, so a sleeping laptop or a guest network takes every AI
-  feature — sync included, now — down to its fallback. `EXPO_PUBLIC_API_URL`
-  already exists to point the app at a hosted instance, so this is hosting
-  work rather than code.
+- **Somewhere to host the FastAPI service itself.** The database and photo
+  storage are hosted on Supabase (see above) — this is specifically about the
+  Python process that reads and writes them. It still runs on a laptop on the
+  same Wi-Fi as the phone, so a sleeping laptop or a guest network takes every
+  AI feature — sync included, now — down to its fallback.
+  `EXPO_PUBLIC_API_URL` already exists to point the app at a hosted instance
+  (Railway, Render, Fly.io, etc.), so this is hosting work rather than code.
 - **A real wardrobe.** A fresh install has no tops at all, and the seed is stock
   photography — see "Putting your own clothes in". An afternoon's work that
   improves every other feature at once.
