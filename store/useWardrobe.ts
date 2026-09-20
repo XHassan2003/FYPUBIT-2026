@@ -2,30 +2,57 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { ANALYSIS_TIMEOUT_MS, API_BASE_URL, API_TIMEOUT_MS, TRY_ON_TIMEOUT_MS } from "@/constants/api";
-import {
-  CATEGORIES,
-  Category,
-  OCCASIONS,
-  Occasion,
-  RETIRED_SEED_IDS,
-  WardrobeItem,
-  mockWardrobe,
-  colorPairings,
-} from "@/data/mockWardrobe";
+import { CATEGORIES, Category, OCCASIONS, Occasion, WardrobeItem, colorPairings } from "@/data/wardrobe";
 import { COLOR_SEASONS, ColorSeason, SeasonId } from "@/data/colorSeasons";
-import { myWardrobe } from "@/data/myWardrobe";
 import { SWATCHES } from "@/data/swatches";
 
 /**
- * What a fresh install starts with, and what `merge` reconciles a saved
- * wardrobe against on every launch.
+ * Every id a seeded demo item ever used, across the app's whole history —
+ * the ten retired tops (`top-1`..`top-10`) plus the 22 that made up the rest
+ * of `mockWardrobe` before it was deleted (bottoms, outerwear, shoes,
+ * accessories, dresses).
  *
- * Two halves: the seeded demo pieces, and whatever
- * `service/tools/import_wardrobe.py` generated from your own photographs. The
- * user's own clothes come last so that if an id ever collided, theirs is the
- * one that survives the union below.
+ * Wardrobes are per-account now (see store/wardrobeSync.ts): a fresh local
+ * install starts empty, and what shows up comes from the signed-in
+ * account's own synced data, never a bundled demo array. This list exists
+ * only so `migrate` below can strip these ids from a device that already
+ * has them persisted from before that change — it is migration plumbing,
+ * not something new code should ever add to.
  */
-const SEED_WARDROBE: WardrobeItem[] = [...mockWardrobe, ...myWardrobe];
+const LEGACY_SEED_IDS = [
+  "top-1",
+  "top-2",
+  "top-3",
+  "top-4",
+  "top-5",
+  "top-6",
+  "top-7",
+  "top-8",
+  "top-9",
+  "top-10",
+  "bottom-1",
+  "bottom-2",
+  "bottom-3",
+  "bottom-4",
+  "bottom-5",
+  "bottom-6",
+  "outer-1",
+  "outer-2",
+  "outer-3",
+  "shoe-1",
+  "shoe-2",
+  "shoe-3",
+  "shoe-4",
+  "acc-1",
+  "acc-2",
+  "acc-3",
+  "acc-4",
+  "dress-1",
+  "dress-2",
+  "dress-3",
+  "dress-4",
+  "dress-5",
+];
 
 export interface Outfit {
   id: string;
@@ -453,10 +480,35 @@ function localMatch(
   return { isMatch, score };
 }
 
+/**
+ * Strip every id a seeded demo item has ever used from a persisted wardrobe.
+ *
+ * Exported so it can be tested directly against a fake persisted state,
+ * the same reason `assessPhoto` is exported from store/useTryOn.ts — this is
+ * migration logic worth pinning without spinning up the whole store.
+ *
+ * `merge` below no longer adds anything — there is no seed left to add — so
+ * this is the only place old seed ids are ever removed, and it only runs
+ * once per device, on the version bump that retired them. Anything the user
+ * added is untouched by construction: the app names those
+ * `${category}-${Date.now()}`, which cannot collide with `top-1` or
+ * `bottom-3`.
+ */
+export function migrate(persisted: unknown, version: number): PersistedWardrobe {
+  const state = persisted as PersistedWardrobe;
+  if (version >= 4) return state;
+
+  const legacy = new Set(LEGACY_SEED_IDS);
+  return {
+    ...state,
+    items: (state?.items ?? []).filter((item) => !legacy.has(item.id)),
+  };
+}
+
 export const useWardrobe = create<WardrobeState>()(
   persist<WardrobeState, [], [], PersistedWardrobe>(
     (set, get) => ({
-      items: SEED_WARDROBE,
+      items: [],
       outfits: [],
       profile: {
         name: "Hassan",
@@ -594,68 +646,28 @@ export const useWardrobe = create<WardrobeState>()(
     {
       name: "stylist-wardrobe",
       storage: createJSONStorage(() => AsyncStorage),
-      // Bump this and add a `migrate` when the persisted shape changes, so an
+      // Bump this and extend `migrate` when the persisted shape changes, so an
       // installed app doesn't rehydrate into a state its code no longer expects.
-      version: 3,
+      version: 4,
       partialize: (state) => ({ items: state.items, outfits: state.outfits, profile: state.profile }),
+      // v3 → v4: no more seed wardrobe at all — see `migrate`'s own doc comment
+      // above, and LEGACY_SEED_IDS for exactly what it strips.
+      migrate,
       /**
-       * v2 → v3: drop the seeded tops from a wardrobe that already saved them.
-       *
-       * `merge` below adds missing seed pieces but never removes anything, and
-       * it cannot: it has no way to tell a piece the user deleted on purpose
-       * from one that was retired upstream. So removals go here, where the
-       * version number says explicitly that this runs once and only once.
-       *
-       * Only the ids in `RETIRED_SEED_IDS` are touched. Anything the user added
-       * is untouched by construction — the app names those
-       * `${category}-${Date.now()}`, which cannot collide with `top-1`.
+       * Nothing to add on top of what was saved — wardrobes are per-account
+       * now (store/wardrobeSync.ts pulls the account's own data on sign-in),
+       * so there is no seed left to union in on every rehydrate the way v3
+       * and earlier did. This is close to zustand's own default `merge`;
+       * kept explicit so the shape stays obvious from reading this file
+       * rather than needing to know the library's default.
        */
-      migrate: (persisted, version) => {
-        const state = persisted as PersistedWardrobe;
-        if (version >= 3) return state;
-
-        const retired = new Set(RETIRED_SEED_IDS);
-        return {
-          ...state,
-          items: (state?.items ?? []).filter((item) => !retired.has(item.id)),
-        };
-      },
-      /**
-       * Reconcile the saved wardrobe with the seed on every launch.
-       *
-       * `items` is persisted, so a phone that has run the app before rehydrates
-       * its stored array and any newly seeded piece never appears — which on a
-       * demo device looks exactly like the code not having been deployed.
-       *
-       * This runs in `merge` rather than `migrate` deliberately. A migration
-       * fires once, on a version bump, which would mean editing this file every
-       * time `myWardrobe.ts` is regenerated from a fresh batch of photographs.
-       * Merging on every rehydrate means: run the importer, reload, the clothes
-       * are there. It is a set construction and a filter over a few dozen items,
-       * so doing it per launch costs nothing.
-       *
-       * Union by id — anything the user added on the device survives untouched,
-       * and nothing is duplicated.
-       *
-       * The trade-off, stated plainly: a seed piece deliberately deleted comes
-       * back on the next launch. Reappearing clothes are a smaller surprise than
-       * a wardrobe that silently refuses to update, but if that ever stops being
-       * true the fix is to record deletions, not to drop this merge.
-       */
-      merge: (persisted, current) => {
-        const saved = persisted as Partial<PersistedWardrobe> | undefined;
-        const items = saved?.items ?? [];
-        const owned = new Set(items.map((item) => item.id));
-
-        return {
-          ...current,
-          ...saved,
-          items: [...items, ...SEED_WARDROBE.filter((seed) => !owned.has(seed.id))],
-        };
-      },
+      merge: (persisted, current) => ({
+        ...current,
+        ...(persisted as Partial<PersistedWardrobe> | undefined),
+      }),
     }
   )
 );
 
-export { CATEGORIES };
+export { CATEGORIES, LEGACY_SEED_IDS };
 export type { Category, Occasion, WardrobeItem };

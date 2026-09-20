@@ -45,8 +45,9 @@ def unsplash(photo_id: str) -> str:
     return f"https://images.unsplash.com/photo-{photo_id}?auto=format&fit=crop&w=800&q=80"
 
 
-# A handful of pieces from data/mockWardrobe.ts, so the garment is one the app
-# really has rather than a stock photo chosen here.
+# A handful of stock garments for a manual smoke test — self-contained rather
+# than read from the app's wardrobe data, since the app no longer ships a
+# seed wardrobe for this to reference (see data/wardrobe.ts).
 SEEDED = {
     "top-1": ("Oxford Shirt", "tops", unsplash("1620799139507-2a76f79a2f4d")),
     "top-3": ("Knit Sweater", "tops", unsplash("1574201635302-388dd92a4c3f")),

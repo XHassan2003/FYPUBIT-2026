@@ -347,7 +347,7 @@ so before the user spends it.
   An unknown category is refused too rather than defaulted to `upper`, which
   would put trousers on someone's chest — and finding that out costs a
   generation. The app knows the same list (`TRY_ON_CATEGORIES` in
-  `data/mockWardrobe.ts`) so the picker never offers a piece that would be
+  `data/wardrobe.ts`) so the picker never offers a piece that would be
   refused; the service's check is the backstop, not the only line of defence.
 
 **The input photograph decides the result**, more than any setting here. This
@@ -684,8 +684,9 @@ tools/check_keys.py      are the keys in .env going to work? Free, and prints
                          no part of a key, so it is safe to run on a shared
                          screen or paste into a chat
 tools/import_wardrobe.py a folder of garment photographs -> data/myWardrobe.ts,
-                         named and categorised by /analyse. How your own clothes
-                         get into the app without typing twenty forms
+                         named and categorised by /analyse. Not currently
+                         wired into the app (wardrobes are per-account now) —
+                         see "Putting your own clothes in" in the main README
 tests/test_color.py      the colour maths, against published reference data
 tests/test_match.py      the /match endpoint, over the real request shapes
 tests/test_recommend.py  the /recommend contract — shapes and ordering
@@ -734,9 +735,9 @@ and a separate dataset, not a change here.
 
 **Tuning, if you want it.** The weights, the shortlist size and the tolerance
 are constants at the top of `rules.py`, chosen by reasoning and then checked
-against the seed wardrobe rather than fitted to data. If you ever collect real
-preferences — even a handful of "liked this outfit" taps — those constants are
-what you would fit. That is a genuine extension, not a repair.
+by hand during development rather than fitted to data. If you ever collect
+real preferences — even a handful of "liked this outfit" taps — those
+constants are what you would fit. That is a genuine extension, not a repair.
 
 **Learned compatibility.** A Polyvore-style model that learns which garments go
 together from image features is the ambitious version. It needs a labelled
@@ -746,7 +747,7 @@ hand-waving.
 
 **The app's offline fallback is worse than this, and admits it.**
 `COLOR_PAIRINGS` no longer exists here — the scorer does not need a lookup
-table — but `data/mockWardrobe.ts` still has its copy, and `buildLocalOutfit()`
+table — but `data/wardrobe.ts` still has its copy, and `buildLocalOutfit()`
 in the store still runs the old sampling when this service cannot be reached.
 That was harmless while both sides ran identical rules; it is not any more. So
 `suggestOutfit()` returns `{ items, styledOffline }` and the Today screen shows

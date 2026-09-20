@@ -20,7 +20,7 @@ import { Screen } from "@/components/Screen";
 import { SectionHeader } from "@/components/SectionHeader";
 import { colors, gradients, gutter, inkAlpha, spacing, type } from "@/constants/theme";
 import { COLOR_SEASONS } from "@/data/colorSeasons";
-import { OCCASIONS, Occasion, WardrobeItem } from "@/data/mockWardrobe";
+import { OCCASIONS, Occasion, WardrobeItem } from "@/data/wardrobe";
 import { useDisplayName } from "@/hooks/useDisplayName";
 import { useWardrobe } from "@/store/useWardrobe";
 

@@ -21,7 +21,7 @@ import * as MediaLibrary from "expo-media-library/legacy";
 import * as Sharing from "expo-sharing";
 import { Image as RNImage } from "react-native";
 import { create } from "zustand";
-import { toggleInOutfit, WardrobeItem } from "@/data/mockWardrobe";
+import { toggleInOutfit, WardrobeItem } from "@/data/wardrobe";
 import { useWardrobe } from "./useWardrobe";
 
 /**

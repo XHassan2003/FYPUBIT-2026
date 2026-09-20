@@ -14,7 +14,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { colors, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
-import { bodySlot, Category, TRY_ON_CATEGORIES, WardrobeItem } from "@/data/mockWardrobe";
+import { bodySlot, Category, TRY_ON_CATEGORIES, WardrobeItem } from "@/data/wardrobe";
 import type { PhotoConcern } from "@/store/useTryOn";
 import { Button } from "./Button";
 import { Chip } from "./Chip";

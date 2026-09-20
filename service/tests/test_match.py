@@ -1,8 +1,8 @@
 """The /match endpoint, over the real request/response shapes.
 
-These use the app's actual season data and real garments from
-data/mockWardrobe.ts, so a change to the camelCase aliases or the response shape
-fails here rather than silently on a phone.
+These use the app's actual season data and garments shaped like
+data/wardrobe.ts's `WardrobeItem`, so a change to the camelCase aliases or the
+response shape fails here rather than silently on a phone.
 """
 
 import pytest

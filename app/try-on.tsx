@@ -14,7 +14,7 @@ import {
   TryOnHeader,
 } from "@/components/TryOnSteps";
 import { colors, spacing } from "@/constants/theme";
-import { canTryOn, Category, Occasion, WardrobeItem } from "@/data/mockWardrobe";
+import { canTryOn, Category, Occasion, WardrobeItem } from "@/data/wardrobe";
 import { useTryOn } from "@/store/useTryOn";
 import { useWardrobe } from "@/store/useWardrobe";
 

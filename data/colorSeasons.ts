@@ -1,5 +1,5 @@
 // Placeholder seasonal colour-analysis rules, not a model — same spirit as
-// data/mockWardrobe.ts#colorPairings. The quiz result drives the "Color DNA"
+// data/wardrobe.ts#colorPairings. The quiz result drives the "Color DNA"
 // card in Profile and the match checker on wardrobe items.
 
 export type SeasonId = "winter" | "spring" | "summer" | "autumn";

@@ -9,7 +9,7 @@ import { GarmentThumb } from "@/components/GarmentThumb";
 import { Screen } from "@/components/Screen";
 import { SectionHeader } from "@/components/SectionHeader";
 import { colors, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
-import { Category, WardrobeItem } from "@/data/mockWardrobe";
+import { Category, WardrobeItem } from "@/data/wardrobe";
 import { useWardrobe } from "@/store/useWardrobe";
 
 const STAGE = require("@/assets/images/editorial/builder-stage.jpg");

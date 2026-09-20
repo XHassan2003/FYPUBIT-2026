@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
 import { StyleSheet, View, ViewStyle } from "react-native";
 import { colors } from "@/constants/theme";
-import { WardrobeItem } from "@/data/mockWardrobe";
+import { WardrobeItem } from "@/data/wardrobe";
 import { GarmentSilhouette } from "./GarmentSilhouette";
 
 interface GarmentThumbProps {

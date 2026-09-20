@@ -8,7 +8,7 @@ import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { GarmentThumb } from "@/components/GarmentThumb";
 import { Screen } from "@/components/Screen";
 import { colors, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
-import { canTryOn, WardrobeItem } from "@/data/mockWardrobe";
+import { canTryOn, WardrobeItem } from "@/data/wardrobe";
 import { useDisplayName } from "@/hooks/useDisplayName";
 import { useTryOn } from "@/store/useTryOn";
 import { useWardrobe } from "@/store/useWardrobe";
@@ -172,6 +172,11 @@ export default function HomeScreen() {
         </View>
       </View>
 
+      {rail.length === 0 ? (
+        <Text style={[type.body, styles.railEmpty]}>
+          Nothing to try on yet — add a piece from Wardrobe to get started.
+        </Text>
+      ) : (
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -208,6 +213,7 @@ export default function HomeScreen() {
           );
         })}
       </ScrollView>
+      )}
 
       <View style={styles.cta}>
         <Pressable
@@ -364,6 +370,7 @@ const styles = StyleSheet.create({
 
   railScroll: { marginTop: spacing.xl },
   rail: { flexDirection: "row", gap: spacing.md, paddingHorizontal: gutter, paddingBottom: spacing.sm },
+  railEmpty: { marginTop: spacing.xl, paddingHorizontal: gutter },
   railItem: { width: 112 },
   railRing: { borderWidth: 1, borderColor: "transparent", padding: 2 },
   railRingOn: { borderColor: colors.ink },

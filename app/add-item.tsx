@@ -11,7 +11,7 @@ import { PhotoAnalysis } from "@/components/PhotoAnalysis";
 import { Screen } from "@/components/Screen";
 import { SectionHeader } from "@/components/SectionHeader";
 import { colors, fonts, gutter, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
-import { CATEGORIES, Category, OCCASIONS, Occasion } from "@/data/mockWardrobe";
+import { CATEGORIES, Category, OCCASIONS, Occasion } from "@/data/wardrobe";
 import { SWATCHES } from "@/data/swatches";
 import { useGarmentAnalysis } from "@/hooks/useGarmentAnalysis";
 import { GarmentAnalysis, useWardrobe } from "@/store/useWardrobe";

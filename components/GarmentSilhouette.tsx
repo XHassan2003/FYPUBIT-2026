@@ -1,5 +1,5 @@
 import Svg, { Path } from "react-native-svg";
-import { Category } from "@/data/mockWardrobe";
+import { Category } from "@/data/wardrobe";
 
 interface GarmentSilhouetteProps {
   category: Category;

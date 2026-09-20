@@ -2,7 +2,7 @@
 
 The field aliases matter: the React Native app sends and expects camelCase
 (`colorName`, `includeAccessories`), because that is what `WardrobeItem` in
-data/mockWardrobe.ts looks like. Python keeps snake_case internally and Pydantic
+data/wardrobe.ts looks like. Python keeps snake_case internally and Pydantic
 translates at the boundary, so neither side has to bend to the other.
 """
 

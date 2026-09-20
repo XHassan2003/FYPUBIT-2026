@@ -3,7 +3,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { colors, gradients, inkAlpha, paperAlpha, spacing, type } from "@/constants/theme";
-import { WardrobeItem } from "@/data/mockWardrobe";
+import { WardrobeItem } from "@/data/wardrobe";
 import { useWardrobe } from "@/store/useWardrobe";
 import { GarmentThumb } from "./GarmentThumb";
 

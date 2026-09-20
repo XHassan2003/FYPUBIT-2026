@@ -10,7 +10,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { colors, gutter, inkAlpha, spacing, type } from "@/constants/theme";
 import { COLOR_SEASONS } from "@/data/colorSeasons";
-import { WardrobeItem } from "@/data/mockWardrobe";
+import { WardrobeItem } from "@/data/wardrobe";
 import { MatchResult, useWardrobe } from "@/store/useWardrobe";
 import { Button } from "./Button";
 import { GarmentThumb } from "./GarmentThumb";

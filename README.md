@@ -147,11 +147,15 @@ npm test
 ```
 
 `npm test` is Jest, through the `jest-expo` preset so React Native and Expo
-modules resolve the way they do on a device. Two suites:
+modules resolve the way they do on a device. Three suites:
 `store/__tests__/useTryOn.test.ts` covers the photo check on step three of the
-try-on flow, and `data/__tests__/mockWardrobe.test.ts` guards the seed — both
-are pure logic sitting in front of a paid API call, and exactly the kind of
-thing that breaks quietly. The Python service has its own suite; see
+try-on flow; `store/__tests__/useWardrobe.test.ts` covers the migration that
+strips the old seed wardrobe's ids off an already-installed device (see
+"Account sync"); `store/__tests__/wardrobeSync.test.ts` covers the sync layer
+degrading to a fallback rather than throwing when the service or Supabase is
+unreachable. All three are pure logic sitting in front of a paid API call or a
+network round trip, and exactly the kind of thing that breaks quietly. The
+Python service has its own suite; see
 [service/README.md](service/README.md#tests).
 
 `jest.setup.js` stands in for the native modules that only exist on a device —
@@ -189,14 +193,15 @@ app/color-quiz.tsx       Colour Quiz modal — four questions, seasonal palette 
 constants/theme.ts       colours, type scale, spacing — the ONLY place for hexes
 constants/api.ts         the recommendation service's address and timeout
 constants/auth.ts        the Clerk key, and Clerk errors turned into readable text
-data/mockWardrobe.ts     22 seed items (no tops — see RETIRED_SEED_IDS) + colour-pairing rules
+data/wardrobe.ts         Category/Occasion/WardrobeItem, try-on body-slot rules, colour-pairing table
+data/myWardrobe.ts       placeholder for the bulk-import tool's output — not currently wired in
 data/colorSeasons.ts     four seasonal palettes, the quiz questions, computeSeason()
 store/useWardrobe.ts     zustand + persist — items, outfits, profile, suggestOutfit(), matchItemToProfile()
 store/useTryOn.ts        the try-on in progress — shared by Home and the flow, not persisted
 store/wardrobeSync.ts    pulls the account's wardrobe on sign-in, pushes local changes — see Account sync
 store/__tests__/useTryOn.test.ts  the photo check on step three, both sides of every threshold
+store/__tests__/useWardrobe.test.ts  the migration that strips the old seed wardrobe's ids
 store/__tests__/wardrobeSync.test.ts  pull/push degrading to a fallback rather than throwing
-data/__tests__/mockWardrobe.test.ts  the seed, and that RETIRED_SEED_IDS cannot delete a live piece
 jest.setup.js            stands in for the native modules Jest has no device for
 hooks/useDisplayName.ts  Clerk's name for the Style greeting and the Profile heading
 hooks/useGarmentAnalysis.ts  pick, resize and read a garment photo
@@ -441,9 +446,9 @@ narrow case, but worth knowing before it looks like data loss during a demo.
 
 **Garment photos sync too.** A photo added on-device starts as a local
 `file://` path, same as always. `wardrobeSync.ts` uploads any such image to
-Supabase Storage before a push and rewrites the item to point at the result —
-seed-wardrobe URLs and the bulk-import tool's paths are left untouched, since
-only `file://` values are ones the backfill recognises as its job.
+Supabase Storage before a push and rewrites the item to point at the
+result — anything already remote is left untouched, since only `file://`
+values are ones the backfill recognises as its job.
 
 Server-side: one table, `wardrobes`, one JSON blob per account
 (`items`/`outfits`/`profile` together, mirroring exactly what `persist`
@@ -520,6 +525,14 @@ Done:
   `expo-file-system`'s own `File.upload()` instead, which sidesteps `FormData`
   entirely and is what `store/useTryOn.ts` already relies on for the same
   reason.
+- **No more seeded demo wardrobe.** The 22 stock/editorial placeholder items
+  every account used to see are gone; a fresh install now starts genuinely
+  empty, and what shows up is only ever what the signed-in account actually
+  owns — the point per-account sync exists for in the first place. A
+  migration (`store/useWardrobe.ts`'s `migrate`, persist version 4) strips
+  the old seed ids off any device that already had them persisted, and the
+  one already-tested account's Supabase row was cleaned the same way, by
+  hand — see [Account sync](#account-sync).
 
 Left:
 
@@ -530,9 +543,12 @@ Left:
   AI feature — sync included, now — down to its fallback.
   `EXPO_PUBLIC_API_URL` already exists to point the app at a hosted instance
   (Railway, Render, Fly.io, etc.), so this is hosting work rather than code.
-- **A real wardrobe.** A fresh install has no tops at all, and the seed is stock
-  photography — see "Putting your own clothes in". An afternoon's work that
-  improves every other feature at once.
+- **Content for a fresh demo device.** There is no bundled wardrobe to fall
+  back on anymore, seeded or otherwise — a brand-new account has nothing
+  until real clothes are added, so every other feature (recommend, match,
+  try-on, Looks) has nothing to work with either. Add a handful of real
+  garments before demoing on a fresh install; see "Putting your own clothes
+  in" below.
 - **The offline fallback.** `buildLocalOutfit()` is still the original
   random-within-category rule, and is now the last placeholder in the codebase.
   It says so on screen, which is why it has survived this long.
@@ -548,7 +564,7 @@ under the key `stylist-wardrobe`. Only `items`, `outfits` and `profile` are
 saved — the actions are rebuilt on each launch.
 
 `app/_layout.tsx` holds the splash screen until both the fonts and the store have
-loaded, so the app never flashes the seed wardrobe before the saved one arrives.
+loaded, so the app never flashes an empty wardrobe before the saved one arrives.
 
 If you change the shape of the persisted data, bump `version` in the persist
 options and add a `migrate` function. Otherwise an already-installed app will
@@ -557,28 +573,30 @@ development, uninstall the app or call `useWardrobe.persist.clearStorage()`.
 
 ## Putting your own clothes in
 
-The seeded wardrobe is stock photography. Your own clothes are better on every
-axis that matters — and not only the legal one, though that one is real:
-retailer product photos belong to the retailer and cannot go in a submitted
-project.
+There is no seeded wardrobe anymore — every account starts empty, and what
+shows up is only ever what that account actually added. The normal way in is
+**Add Piece**, in the app: pick a photo, `/analyse` fills in the name,
+category, colour and occasions, and it syncs to the account automatically
+(see [Account sync](#account-sync)). One piece at a time, but real, and
+already wired end to end.
 
-They are also **better input**. A garment laid flat or hung against a plain wall
-is the cleanest reference the model can get, and it beats every editorial photo in
-the seed wardrobe. The South Asian formalwear in there is the weakest set of
-garments in the app precisely because those are pictures of *people* rather than
-pictures of *clothes*.
+A garment laid flat or hung against a plain wall is the cleanest reference
+the model can get — better than a photo of someone wearing it, which is why
+that's worth doing even for pieces a phone's camera roll already has from
+somewhere else.
 
-Photograph them, then run this once from `service/`:
-
-```bash
-python tools/import_wardrobe.py ~/Pictures/my-clothes
-```
-
-Each photo goes through `/analyse` — the same endpoint Add Piece uses — so the
-name, category, colour and occasions come back filled in. The images are scaled
-into `assets/images/wardrobe/` and `data/myWardrobe.ts` is written, which the
-store unions with the seed on the next launch. No version bump, no re-typing,
-and `--dry-run` shows what it would do without writing anything.
+**`service/tools/import_wardrobe.py` exists for doing many at once, but it is
+not currently wired into the app.** Point it at a folder and it still
+analyses every photo through `/analyse` and writes the result to
+`data/myWardrobe.ts` plus resized images into `assets/images/wardrobe/` —
+useful for previewing what a batch would look like — but nothing reads that
+file anymore. Wardrobes are per-account now, and a file bundled into the app
+ships to every account, which defeats the point. Pushing straight to one
+account's database is the intended replacement; it needs its own design pass
+around a Clerk session token expiring (~60s) well inside a long per-photo
+analysis batch. Until then, `--dry-run` shows what it would produce without
+writing anything, and one-at-a-time through Add Piece is the way that
+actually reaches an account today.
 
 How to shoot them, in order of how much each matters:
 
@@ -587,12 +605,11 @@ How to shoot them, in order of how much each matters:
 3. Front on, not at an angle, and not crumpled.
 4. Even light — daylight indoors, away from direct sun, beats a flash.
 
-**Check the categories in the generated file before demoing.** A shalwar kameez
-or kurta must be `dresses`; filed as `tops`, try-on fits its upper half and
-leaves your own trousers showing underneath.
-
-Adding one piece at a time on the phone still works exactly as before — Add
-Piece does the same analysis. The tool is only for doing twenty at once.
+**Whichever way a piece is added, check its category before demoing try-on.**
+A shalwar kameez or kurta must be `dresses`; filed as `tops`, try-on fits its
+upper half and leaves your own trousers showing underneath. `/analyse` gets
+this right most of the time, but Add Piece's category picker is there for
+the rest.
 
 ## Console noise you can ignore
 
@@ -635,25 +652,14 @@ newer on npm is a 58 canary. It goes away when Expo fixes it.
   extremes slightly more often. It is variance rather than bias, and it is the
   behaviour the two-piece shape has always had, but it does mean a dress wins
   the top slot a little more often than its average quality alone would earn.
-- **A fresh install has no tops.** The ten seeded ones were withdrawn (see
-  `RETIRED_SEED_IDS`) because ten shortlist slots per category meant stock
-  photographs crowded out the wearer's own shirts on every recommendation. The
-  wardrobe still assembles outfits from bottoms and shoes, but until someone
-  adds a top of their own, a look comes back without one. If this is being
-  demonstrated on a device that has never had clothes added, add a couple first.
-- **The seeded wardrobe is stock photography, not anyone's real clothes.** The
-  strongest version of this demo is your own wardrobe, and
-  `service/tools/import_wardrobe.py` exists to make that a five-minute job —
-  see "Putting your own clothes in" above. Retailer product photos (Khaadi,
-  Sapphire, J., Outfitters) are those companies' copyrighted work and are not
-  an option for a submitted project.
-- **The South Asian formalwear uses editorial photographs, not product shots.**
-  Unsplash has very little Pakistani or Indian clothing shot flat or on a
-  hanger, so those pieces are photographs of models wearing the garment. That is
-  a weaker reference — the model has to separate garment from wearer before it
-  can transfer anything — and those items come out noticeably less crisp than
-  the hanger-shot shirts. Swapping in real product photography is the single
-  biggest quality improvement available to this feature.
+- **A fresh account has nothing at all.** There is no seeded wardrobe
+  anymore — no stock tops, bottoms, shoes, or the South Asian formalwear that
+  used to fill out the demo. `build_outfit` returns an empty look and the
+  Wardrobe/Style/Looks screens show their own empty states (see "Putting your
+  own clothes in" above) until real clothes are added. This is a stronger
+  demo once populated — every photo is real, not a retailer's copyrighted
+  stock — but it means **add a handful of pieces before demoing on any
+  account that has never had clothes added.**
 - Virtual try-on is **sensitive to the input photograph**, more than anything
   else in the app. One person, head to foot, front on, plain background, no
   bulky coat — that is what the model expects of the wearer, and a photo that breaks
@@ -678,8 +684,9 @@ newer on npm is a 58 canary. It goes away when Expo fixes it.
   looks on you", not "see how it fits".
 - Outfit selection is a scoring function, not a learned model. It measures real
   colour relationships, but the weights behind it were reasoned about and
-  sanity-checked against the seed wardrobe, not fitted to anyone's preferences.
-  Say "rule-based, but measured" rather than letting it be heard as "AI".
+  sanity-checked by hand during development, not fitted to anyone's
+  preferences. Say "rule-based, but measured" rather than letting it be heard
+  as "AI".
 - The seasonal palettes themselves are still authored by hand. The scoring
   against them is measured, but which six colours make up "True Winter" is a
   designer's list, not an analysis.

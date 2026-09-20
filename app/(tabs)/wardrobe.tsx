@@ -8,7 +8,7 @@ import { ItemSheet } from "@/components/ItemSheet";
 import { ItemTile } from "@/components/ItemTile";
 import { Screen } from "@/components/Screen";
 import { colors, gutter, inkAlpha, paperAlpha, shadow, spacing, type } from "@/constants/theme";
-import { CATEGORIES, Category, WardrobeItem } from "@/data/mockWardrobe";
+import { CATEGORIES, Category, WardrobeItem } from "@/data/wardrobe";
 import { useWardrobe } from "@/store/useWardrobe";
 
 const EMPTY_IMAGE = require("@/assets/images/editorial/wardrobe-empty.jpg");
